@@ -5,4 +5,4 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "$SCRIPT_DIR/setup"
 
-python3 -m pip install --requirement dev-requirements.txt
+python3 -m pip install -e ".[dev]"
