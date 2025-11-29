@@ -338,7 +338,7 @@ class Device:
 
         """
         self.host = host
-        self._connected = False
+        self._trying_to_connect = False
         self._websocket: websockets.ClientConnection | None = None
         self._ws_task: asyncio.Task[None] | None = None
         self._login_key = None
@@ -390,8 +390,7 @@ class Device:
         if self._ws_task is not None:
             return  # Already connected
 
-        # Create an event to signal when connection is ready
-        self._connected_event = asyncio.Event()
+        self._trying_to_connect = True
         self._ws_task = asyncio.create_task(self._handle_connection())
 
     # Set up connection and cleanup
@@ -411,10 +410,6 @@ class Device:
 
                     await self._emit(ConnectionStatus(connected=True))
                     _LOGGER.debug("Sent login message: %s", login_message)
-
-                    # Signal that connection is ready
-                    if self._connected_event:
-                        self._connected_event.set()
 
                     # Listen for messages from the device
                     while True:
@@ -447,6 +442,7 @@ class Device:
 
     async def disconnect(self) -> None:
         """Stop the websocket client."""
+        self._trying_to_connect = False
         if self._ws_task is not None:
             self._ws_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -554,7 +550,7 @@ class Device:
             TimeoutError: If the command send operation times out.
 
         """
-        if self._websocket is None:
+        if self._websocket is None and not self._trying_to_connect:
             _LOGGER.error(
                 "Cannot send command to %s - Please connect() first",
                 self.host,
@@ -562,7 +558,7 @@ class Device:
             raise NotConnectedError
 
         command_str = json.dumps(command)
-        last_exception = None
+        last_exception = NotConnectedError
 
         for attempt in range(1, retries + 1):
             try:
@@ -573,7 +569,8 @@ class Device:
                     retries,
                     command_str,
                 )
-                await self._websocket.send(command_str)
+                if self._websocket:
+                    await self._websocket.send(command_str)
             except websockets.exceptions.ConnectionClosedError as err:
                 last_exception = err
                 _LOGGER.exception(

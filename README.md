@@ -2,6 +2,25 @@
 
 Python library for SystemNexa2 device integration.
 
+This package provides a client library for communicating with SystemNexa2 smart home
+devices over WebSocket and REST APIs. It supports device discovery, real-time state
+updates, brightness control, and configuration management.
+
+Supported Devices
+-----------------
+- Switches: WBR-01
+- Plugs: WPR-01, WPO-01
+- Lights: WBD-01, WPD-01
+
+Key Features
+------------
+- Asynchronous communication via WebSocket and REST
+- Real-time device state updates
+- Brightness control for dimmable devices
+- Device settings management (433MHz, LED, DIY mode, etc.)
+- Automatic reconnection handling
+- Error handling and logging
+
 ## Installation
 
 ```bash
