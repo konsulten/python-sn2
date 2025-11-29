@@ -229,10 +229,12 @@ class TestDevice:
             s for s in setting_update.settings if isinstance(s, OnOffSetting)
         ]
 
-        # Verify we have three OnOffSettings
-        assert len(onoff_settings) == 4
+        # Verify we have four OnOffSettings
+        expected_settings_count = 4
+        assert len(onoff_settings) == expected_settings_count
 
-        # Find the 433MHz setting and verify it's off (value == 1 means disabled/off)
+        # Find the 433MHz setting and verify it's off
+        # (value == 1 means disabled/off)
         mhz_433_setting = next((s for s in onoff_settings if "433Mhz" in s.name), None)
         assert mhz_433_setting is not None
         assert not mhz_433_setting.is_enabled()
@@ -264,13 +266,14 @@ class TestDevice:
         await asyncio.sleep(0.2)  # Allow message processing
 
         # Verify state change callback was called
+        expected_brightness = 0.75
         state_calls = [
             call
             for call in self.on_update_mock.call_args_list
             if isinstance(call[0][0], StateChange)
         ]
         assert len(state_calls) > 0
-        assert state_calls[0][0][0].state == 0.75
+        assert state_calls[0][0][0].state == expected_brightness
 
         await device.disconnect()
 
@@ -352,9 +355,11 @@ class TestDevice:
             ]
 
             # Verify we have three OnOffSettings
-            assert len(onoff_settings) == 3
+            expected_onoff_count = 3
+            assert len(onoff_settings) == expected_onoff_count
 
-            # Find the 433MHz setting and verify it's off (value == 1 means disabled/off)
+            # Find the 433MHz setting and verify it's off
+            # (value == 1 means disabled/off)
             mhz_433_setting = next(
                 (s for s in onoff_settings if "433Mhz" in s.name), None
             )
@@ -425,14 +430,15 @@ class TestDevice:
         await device.connect()
         await asyncio.sleep(0.1)
 
-        await device.set_brightness(0.5)
+        test_brightness = 0.5
+        await device.set_brightness(test_brightness)
 
         # Verify brightness command was sent
         brightness_calls = [
             call
             for call in mock_ws.send.call_args_list
             if json.loads(call[0][0]).get("type") == "state"
-            and json.loads(call[0][0]).get("value") == 0.5
+            and json.loads(call[0][0]).get("value") == test_brightness
         ]
         assert len(brightness_calls) > 0
 

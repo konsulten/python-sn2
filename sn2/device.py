@@ -186,10 +186,13 @@ class OnOffSetting(Setting):
 
         Args:
             name (str): The name of the device.
-            param_key (str): The parameter key used to identify the device parameter.
+            param_key (str): The parameter key used to identify the device
+                parameter.
             current (Any): The current state/value of the device.
-            on_value (Any): The value that represents the device being in an "on" state.
-            off_value (Any): The value that represents the device being in an "off" state.
+            on_value (Any): The value that represents the device being in an
+                "on" state.
+            off_value (Any): The value that represents the device being in an
+                "off" state.
 
         Returns:
             None
@@ -203,7 +206,7 @@ class OnOffSetting(Setting):
 
     async def enable(self, device: "Device") -> None:
         """
-        Enable a device by updating its setting with the enable value.
+        Enable a setting with the enable value.
 
         Args:
             device (Device): The device instance to which the setting should be enabled.
@@ -213,20 +216,22 @@ class OnOffSetting(Setting):
 
     async def disable(self, device: "Device") -> None:
         """
-        Disable the device by updating its setting.
+        Disable the setting.
 
         Args:
-            device (Device): The device instance to which the setting should be disabled.
+            device (Device): The device instance to which the setting should be
+                disabled.
 
         """
         await device.update_setting({self._param_key: self._disable_value})
 
     def is_enabled(self) -> bool:
         """
-        Check if the device is currently enabled.
+        Check if the setting is currently enabled.
 
         Returns:
-            bool: True if the device's current state matches the enable value, False otherwise.
+            bool: True if the device's current state matches the enable value,
+                False otherwise.
 
         """
         return self._current_state == self._enable_value
@@ -554,7 +559,7 @@ class Device:
                 "Cannot send command to %s - Please connect() first",
                 self.host,
             )
-            raise NotConnectedError()
+            raise NotConnectedError
 
         command_str = json.dumps(command)
         last_exception = None
