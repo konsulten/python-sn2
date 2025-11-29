@@ -23,7 +23,6 @@ from sn2.device import (
     SettingsUpdate,
     StateChange,
 )
-from sn2.json_model import Settings
 
 if TYPE_CHECKING:
     from collections.abc import Generator

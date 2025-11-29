@@ -19,6 +19,34 @@ from sn2.json_model import DeviceInformation, Settings
 
 _LOGGER = logging.getLogger(__name__)
 
+
+class DeviceInitializationError(Exception):
+    """Exception raised when device initialization fails."""
+
+    def __init__(self, message: str = "Failed to initialize device") -> None:
+        """Initialize the exception with an optional message."""
+        self.message = message
+        super().__init__(self.message)
+
+
+class DeviceUnsupportedError(Exception):
+    """Exception raised when device is unsupported."""
+
+    def __init__(self, message: str = "Device not supported") -> None:
+        """Initialize the exception with an optional message."""
+        self.message = message
+        super().__init__(self.message)
+
+
+class NotConnectedError(Exception):
+    """Exception raised when device has not been connected before running commands."""
+
+    def __init__(self, message: str = "Device not connected") -> None:
+        """Initialize the exception with an optional message."""
+        self.message = message
+        super().__init__(self.message)
+
+
 SWITCH_MODELS: Final = ["WBR-01"]
 PLUG_MODELS: Final = ["WPR-01", "WPO-01"]
 LIGHT_MODELS: Final = ["WBD-01", "WPD-01"]
@@ -305,7 +333,6 @@ class Device:
 
         """
         self.host = host
-        self.host = host
         self._connected = False
         self._websocket: websockets.ClientConnection | None = None
         self._ws_task: asyncio.Task[None] | None = None
@@ -318,15 +345,25 @@ class Device:
         self._on_update = on_update
 
     async def initialize(self) -> None:
-        settings = await self.get_settings()
-        info = await self.get_info()
-        if info and settings:
-            self.settings = settings
-            self.info_data = info.information
-            self.initialized = True
-        else:
+        """
+        Initialize the device by fetching settings and information.
+
+        Raises
+        ------
+        DeviceInitializationError
+            If fetching settings or information fails.
+
+        """
+        try:
+            settings = await self.get_settings()
+            info = await self.get_info()
+            if info and settings:
+                self.settings = settings
+                self.info_data = info.information
+                self.initialized = True
+        except Exception as e:
             msg = "Failed to initialize device"
-            raise RuntimeError(msg)
+            raise DeviceInitializationError(msg) from e
 
     async def _emit(self, event: UpdateEvent) -> None:
         """Invoke unified callback if provided."""
@@ -345,6 +382,11 @@ class Device:
 
         Starts the websocket client task for handling device communication.
         """
+        if self._ws_task is not None:
+            return  # Already connected
+
+        # Create an event to signal when connection is ready
+        self._connected_event = asyncio.Event()
         self._ws_task = asyncio.create_task(self._handle_connection())
 
     # Set up connection and cleanup
@@ -364,6 +406,10 @@ class Device:
 
                     await self._emit(ConnectionStatus(connected=True))
                     _LOGGER.debug("Sent login message: %s", login_message)
+
+                    # Signal that connection is ready
+                    if self._connected_event:
+                        self._connected_event.set()
 
                     # Listen for messages from the device
                     while True:
@@ -385,13 +431,12 @@ class Device:
             except asyncio.CancelledError:
                 break
             except BaseException:
-                self._websocket = None
                 # Set device as unavailable when connection attempt fails
                 await self._emit(ConnectionStatus(connected=False))
                 _LOGGER.exception("Lost connection to: %s", self.host)
             # Wait before trying to reconnect
             try:
-                await asyncio.sleep(30)
+                await asyncio.sleep(1)
             except asyncio.CancelledError:
                 break
 
@@ -479,7 +524,11 @@ class Device:
         """Turn on the device."""
         await self.send_command({"type": "state", "value": -1})
 
-    async def send_command(self, command: dict[str, Any]) -> None:
+    async def send_command(
+        self,
+        command: dict[str, Any],
+        retries: int = 3,
+    ) -> None:
         """
         Send a command to the device via WebSocket.
 
@@ -489,48 +538,87 @@ class Device:
 
         Args:
             command: A dictionary containing the command data to send to the device.
+            timeout_seconds: Maximum time in seconds to wait for the send operation.
+            retries: Number of retry attempts if the command fails to send.
 
         Returns:
             None
 
         Raises:
-            Does not raise exceptions directly, but logs errors for:
-            - Missing WebSocket connection
-            - ConnectionClosed: When the WebSocket connection is closed
-            - Other exceptions during command transmission
+            NotConnectedError: If there is no active WebSocket connection.
+            TimeoutError: If the command send operation times out.
 
         """
-        _LOGGER.error(command)
         if self._websocket is None:
             _LOGGER.error(
-                "Cannot send command to %s - no WebSocket connection available",
+                "Cannot send command to %s - Please connect() first",
                 self.host,
             )
-            # TODO
-            return
+            raise NotConnectedError()
 
-        try:
-            command_str = json.dumps(command)
-            _LOGGER.info("Sending command to %s: %s", self.host, command_str)
-            await self._websocket.send(command_str)
-            _LOGGER.debug("Command sent successfully to %s", self.host)
-        except websockets.exceptions.ConnectionClosed as err:
-            _LOGGER.exception(
-                "Failed to send command to %s - connection closed: %s %s",
-                self.host,
-                err.code,
-                err.reason,
-            )
-            # Mark entity as unavailable when command fails due to connection issues
-            await self._emit(ConnectionStatus(connected=False))
-        except Exception:
-            _LOGGER.exception("Failed to send command to %s", self.host)
+        command_str = json.dumps(command)
+        last_exception = None
+
+        for attempt in range(1, retries + 1):
+            try:
+                _LOGGER.info(
+                    "Sending command to %s (attempt %d/%d): %s",
+                    self.host,
+                    attempt,
+                    retries,
+                    command_str,
+                )
+                await self._websocket.send(command_str)
+            except websockets.exceptions.ConnectionClosedError as err:
+                last_exception = err
+                _LOGGER.exception(
+                    "Failed to send command to %s - connection closed: %s %s",
+                    self.host,
+                    err.code,
+                    err.reason,
+                )
+                # Mark entity as unavailable when command fails due to connection
+                await self._emit(ConnectionStatus(connected=False))
+            except websockets.exceptions.ConnectionClosedOK as err:
+                last_exception = err
+                _LOGGER.exception(
+                    "Failed to send command to %s - connection closed due to : %s %s",
+                    self.host,
+                    err.code,
+                    err.reason,
+                )
+                # Mark entity as unavailable when command fails due to connection
+                await self._emit(ConnectionStatus(connected=False))
+                raise NotConnectedError from err
+            except Exception as err:
+                last_exception = err
+                _LOGGER.exception(
+                    "Failed to send command to %s (attempt %d/%d)",
+                    self.host,
+                    attempt,
+                    retries,
+                )
+                await self._emit(ConnectionStatus(connected=False))
+            else:
+                _LOGGER.debug(
+                    "Command %s sent successfully to %s", command_str, self.host
+                )
+                return
+
+            # Wait a bit before retrying (exponential backoff)
+            if attempt < retries:
+                await asyncio.sleep(0.5 * (2**attempt))
+
+        # If we get here, all retries failed
+        _LOGGER.error(
+            "Failed to send command to %s after %d attempts", self.host, retries
+        )
+        if last_exception:
+            raise last_exception
 
     async def is_supported(self) -> bool:
         """Check if the device is supported based on model and firmware version."""
         info = await self.get_info()
-        if info is None:
-            return False  # Could be unavailable ?
         supported, _ = Device.is_device_supported(
             model=info.information.model, device_version=info.information.sw_version
         )
@@ -595,7 +683,7 @@ class Device:
             _LOGGER.exception("Failed to update settings at %s", url)
             raise
 
-    async def get_settings(self) -> list[Setting] | None:
+    async def get_settings(self) -> list[Setting]:
         """Fetch device settings via REST API."""
         url = f"http://{self.host}:3000/settings"
         try:
@@ -606,7 +694,7 @@ class Device:
             _LOGGER.exception("Failed to fetch settings from %s", url)
             raise
 
-    async def get_info(self) -> InformationUpdate | None:
+    async def get_info(self) -> InformationUpdate:
         """Fetch device information via REST API."""
         url = f"http://{self.host}:3000/info"
         try:
