@@ -256,8 +256,13 @@ class Device:
     """
 
     @staticmethod
-    def _is_version_compatible(version: str, min_version: str) -> bool:
+    def _is_version_compatible(version: str | None, min_version: str) -> bool:
         """Check if a version string meets minimum version requirements."""
+        if version is None:
+            return False
+        if min_version is None:
+            msg = "min_version needs to be set when comparing"
+            raise ValueError(msg)
         try:
             # Clean up version strings - remove any pre-release indicators
             # Example: "0.9.5-beta.2" becomes "0.9.5"
@@ -342,6 +347,7 @@ class Device:
         self._websocket: websockets.ClientConnection | None = None
         self._ws_task: asyncio.Task[None] | None = None
         self._login_key = None
+        self._version: str | None = None
         self.info_data: InformationData | None = None
         self.initialized = False
         self.settings: list[Setting] = []
@@ -362,6 +368,7 @@ class Device:
         try:
             settings = await self.get_settings()
             info = await self.get_info()
+            self._version = info.information.sw_version
             if info and settings:
                 self.settings = settings
                 self.info_data = info.information
@@ -519,11 +526,17 @@ class Device:
 
     async def turn_off(self) -> None:
         """Turn off the device."""
-        await self.send_command({"type": "state", "value": 0})
+        if self._is_version_compatible(self._version, "1.1.8"):
+            await self.send_command({"type": "state", "on": False})
+        else:
+            await self.send_command({"type": "state", "value": 0})
 
     async def turn_on(self) -> None:
         """Turn on the device."""
-        await self.send_command({"type": "state", "value": -1})
+        if self._is_version_compatible(self._version, "1.1.8"):
+            await self.send_command({"type": "state", "on": True})
+        else:
+            await self.send_command({"type": "state", "value": -1})
 
     async def send_command(
         self,

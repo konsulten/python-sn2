@@ -421,6 +421,54 @@ class TestDevice:
 
         await device.disconnect()
 
+    async def test_turn_on_v1_1_8(
+        self, device: Device, mock_websocket: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test turning on the device with version 1.1.8."""
+        mock_ws = mock_websocket.return_value.__aenter__.return_value
+
+        monkeypatch.setattr(device, "_version", "1.1.8")
+
+        await device.connect()
+        await asyncio.sleep(0.1)
+
+        await device.turn_on()
+
+        # Verify turn on command was sent
+        turn_on_calls = [
+            call
+            for call in mock_ws.send.call_args_list
+            if json.loads(call[0][0]).get("type") == "state"
+            and json.loads(call[0][0]).get("on")
+        ]
+        assert len(turn_on_calls) > 0
+
+        await device.disconnect()
+
+    async def test_turn_off_v1_1_8(
+        self, device: Device, mock_websocket: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test turning off the device with version 1.1.8."""
+        mock_ws = mock_websocket.return_value.__aenter__.return_value
+
+        monkeypatch.setattr(device, "_version", "1.1.8")
+
+        await device.connect()
+        await asyncio.sleep(0.1)
+
+        await device.turn_off()
+
+        # Verify turn off command was sent
+        turn_off_calls = [
+            call
+            for call in mock_ws.send.call_args_list
+            if json.loads(call[0][0]).get("type") == "state"
+            and not json.loads(call[0][0]).get("on")
+        ]
+        assert len(turn_off_calls) > 0
+
+        await device.disconnect()
+
     async def test_set_brightness(
         self, device: Device, mock_websocket: AsyncMock
     ) -> None:
