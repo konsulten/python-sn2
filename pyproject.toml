@@ -39,6 +39,12 @@ Homepage = "https://github.com/konsulten/python-sn2"
 Repository = "https://github.com/konsulten/python-sn2"
 Issues = "https://github.com/konsulten/python-sn2/issues"
 
+[tool.setuptools]
+packages = ["sn2"]
+
+[tool.setuptools.package-data]
+sn2 = ["py.typed"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

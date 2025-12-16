@@ -492,6 +492,8 @@ class Device:
                     await self._emit(
                         SettingsUpdate(settings=await self._parse_settings(settings))
                     )
+                case "ack":
+                    _LOGGER.debug("Ack received?")
                 case unknown:
                     _LOGGER.error("unknown data received %s", unknown)
 
@@ -571,7 +573,7 @@ class Device:
             raise NotConnectedError
 
         command_str = json.dumps(command)
-        last_exception = NotConnectedError
+        last_exception: Exception | None = None
 
         for attempt in range(1, retries + 1):
             try:
@@ -640,7 +642,7 @@ class Device:
         return supported
 
     async def _parse_settings(self, settings: Settings) -> list[Setting]:
-        settings_list = []
+        settings_list: list[Setting] = []
         if settings.disable_433 is not None:
             settings_list.append(
                 OnOffSetting(
