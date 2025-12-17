@@ -695,7 +695,7 @@ class Device:
             ):
                 response.raise_for_status()
 
-                _LOGGER.error("Updated settings at %s with %s", url, settings)
+                _LOGGER.debug("Updated settings at %s with %s", url, settings)
         except Exception:
             _LOGGER.exception("Failed to update settings at %s", url)
             raise
