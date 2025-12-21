@@ -254,6 +254,48 @@ class SettingsUpdate:
 UpdateEvent = ConnectionStatus | InformationUpdate | SettingsUpdate | StateChange
 
 
+@staticmethod
+def _is_version_compatible(version: str | None, min_version: str) -> bool:
+    """Check if a version string meets minimum version requirements."""
+    if version is None:
+        return False
+    if min_version is None:
+        msg = "min_version needs to be set when comparing"
+        raise ValueError(msg)
+    try:
+        # Clean up version strings - remove any pre-release indicators
+        # Example: "0.9.5-beta.2" becomes "0.9.5"
+        clean_version = version.split("-")[0].split("+")[0]
+        clean_min_version = min_version.split("-")[0].split("+")[0]
+
+        version_parts = [int(part) for part in clean_version.split(".")]
+        min_version_parts = [int(part) for part in clean_min_version.split(".")]
+
+        while len(version_parts) < len(min_version_parts):
+            version_parts.append(0)
+        while len(min_version_parts) < len(version_parts):
+            min_version_parts.append(0)
+
+        # Compare version components
+        for v, m in zip(version_parts, min_version_parts, strict=False):
+            if v > m:
+                return True
+            if v < m:
+                return False
+
+        # All components are equal, so versions are equal
+
+    except (ValueError, IndexError):
+        # If parsing fails, log the error and reject the version
+        _LOGGER.exception(
+            "Error parsing version strings '%s' and '%s'",
+            version,
+            min_version,
+        )
+        return False
+    return True
+
+
 class Device:
     """
     Represents a client for SystemNexa2 device integration.
@@ -261,47 +303,6 @@ class Device:
     Handles connection, message processing, and lifecycle events for devices.
 
     """
-
-    @staticmethod
-    def _is_version_compatible(version: str | None, min_version: str) -> bool:
-        """Check if a version string meets minimum version requirements."""
-        if version is None:
-            return False
-        if min_version is None:
-            msg = "min_version needs to be set when comparing"
-            raise ValueError(msg)
-        try:
-            # Clean up version strings - remove any pre-release indicators
-            # Example: "0.9.5-beta.2" becomes "0.9.5"
-            clean_version = version.split("-")[0].split("+")[0]
-            clean_min_version = min_version.split("-")[0].split("+")[0]
-
-            version_parts = [int(part) for part in clean_version.split(".")]
-            min_version_parts = [int(part) for part in clean_min_version.split(".")]
-
-            while len(version_parts) < len(min_version_parts):
-                version_parts.append(0)
-            while len(min_version_parts) < len(version_parts):
-                min_version_parts.append(0)
-
-            # Compare version components
-            for v, m in zip(version_parts, min_version_parts, strict=False):
-                if v > m:
-                    return True
-                if v < m:
-                    return False
-
-            # All components are equal, so versions are equal
-
-        except (ValueError, IndexError):
-            # If parsing fails, log the error and reject the version
-            _LOGGER.exception(
-                "Error parsing version strings '%s' and '%s'",
-                version,
-                min_version,
-            )
-            return False
-        return True
 
     @staticmethod
     def is_device_supported(
@@ -325,7 +326,7 @@ class Device:
             return False, "Missing firmware version"
 
         # Version check - require at least 0.9.5
-        if not Device._is_version_compatible(device_version, min_version="0.9.5"):
+        if not _is_version_compatible(device_version, min_version="0.9.5"):
             return (
                 False,
                 f"Incompatible firmware version {device_version} (min required: 0.9.5)",
@@ -336,31 +337,27 @@ class Device:
     def __init__(
         self,
         host: str,
+        initial_settings: list[Setting],
+        initial_info_data: InformationData,
         on_update: Callable[[UpdateEvent], Awaitable[None] | None] | None = None,
     ) -> None:
-        """
-        Initialize the Device client.
-
-        Args:
-            host (str): The host address of the device.
-            on_update (Callable[[UpdateEvent], Awaitable[None] | None] | None):
-                Callback for device update events.
-
-        """
+        """Initialize the Device client. Should not be used see initiate_device."""
         self.host = host
         self._trying_to_connect = False
         self._websocket: websockets.ClientConnection | None = None
         self._ws_task: asyncio.Task[None] | None = None
-        self._login_key = None
-        self._version: str | None = None
-        self.info_data: InformationData | None = None
-        self.initialized = False
-        self.settings: list[Setting] = []
+        self._version = initial_info_data.sw_version
+        self.info_data = initial_info_data
+        self.settings = initial_settings
 
         # Callbacks
         self._on_update = on_update
 
-    async def initialize(self) -> None:
+    @staticmethod
+    async def initiate_device(
+        host: str,
+        on_update: Callable[[UpdateEvent], Awaitable[None] | None] | None = None,
+    ) -> "Device":
         """
         Initialize the device by fetching settings and information.
 
@@ -371,10 +368,14 @@ class Device:
 
         """
         try:
-            self.settings = await self.get_settings()
-            info = await self.get_info()
-            self._version = info.information.sw_version
-            self.info_data = info.information
+            settings = await Device._get_settings(host)
+            info = await Device._get_info(host)
+            return Device(
+                host=host,
+                initial_settings=settings,
+                initial_info_data=info.information,
+                on_update=on_update,
+            )
         except Exception as e:
             msg = "Failed to initialize device"
             raise DeviceInitializationError(msg) from e
@@ -530,14 +531,14 @@ class Device:
 
     async def turn_off(self) -> None:
         """Turn off the device."""
-        if self._is_version_compatible(self._version, "1.1.8"):
+        if _is_version_compatible(self._version, "1.1.8"):
             await self.send_command({"type": "state", "on": False})
         else:
             await self.send_command({"type": "state", "value": 0})
 
     async def turn_on(self) -> None:
         """Turn on the device."""
-        if self._is_version_compatible(self._version, "1.1.8"):
+        if _is_version_compatible(self._version, "1.1.8"):
             await self.send_command({"type": "state", "on": True})
         else:
             await self.send_command({"type": "state", "value": -1})
@@ -633,7 +634,8 @@ class Device:
         if last_exception:
             raise last_exception
 
-    async def _parse_settings(self, settings: Settings) -> list[Setting]:
+    @staticmethod
+    async def _parse_settings(settings: Settings) -> list[Setting]:
         settings_list: list[Setting] = []
         if settings.disable_433 is not None:
             settings_list.append(
@@ -691,29 +693,38 @@ class Device:
             _LOGGER.exception("Failed to update settings at %s", url)
             raise
 
-    async def get_settings(self) -> list[Setting]:
+    @staticmethod
+    async def _get_settings(host: str) -> list[Setting]:
         """Fetch device settings via REST API."""
-        url = f"http://{self.host}:3000/settings"
+        url = f"http://{host}:3000/settings"
         try:
             async with aiohttp.ClientSession() as session, session.get(url) as response:
                 response.raise_for_status()
                 json_resp = await response.json()
-                return await self._parse_settings(Settings(**json_resp))
+                return await Device._parse_settings(Settings(**json_resp))
         except Exception:
             _LOGGER.exception("Failed to fetch settings from %s", url)
             raise
 
-    async def get_info(self) -> InformationUpdate:
-        """Fetch device information via REST API."""
-        url = f"http://{self.host}:3000/info"
+    async def get_settings(self) -> list[Setting]:
+        """Fetch device settings via REST API."""
+        return await self._get_settings(self.host)
+
+    @staticmethod
+    async def _get_info(host: str) -> InformationUpdate:
+        url = f"http://{host}:3000/info"
         try:
             async with aiohttp.ClientSession() as session, session.get(url) as response:
                 response.raise_for_status()
                 information = DeviceInformation(**await response.json())
-                self.info_data = InformationData.convert_device_information_to_data(
+                info_data = InformationData.convert_device_information_to_data(
                     information
                 )
-                return InformationUpdate(self.info_data)
+                return InformationUpdate(info_data)
         except:
             _LOGGER.exception("Failed to fetch device information from %s:", url)
             raise
+
+    async def get_info(self) -> InformationUpdate:
+        """Fetch device information via REST API."""
+        return await self._get_info(self.host)
