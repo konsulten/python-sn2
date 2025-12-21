@@ -70,23 +70,33 @@ if __name__ == "__main__":
 
 ## Development
 
-Install development dependencies:
+This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
+
+Setup the development environment:
 
 ```bash
-pip install -e ".[dev]"
+./scripts/test-setup
+```
+
+Or manually:
+
+```bash
+# Create virtual environment and install package
+uv venv
+uv pip install -e ".[dev]"
 ```
 
 Run tests:
 
 ```bash
-pytest
+uv run pytest
 ```
 
 Run linting:
 
 ```bash
-ruff check .
-ruff format .
+uv run ruff check .
+uv run ruff format .
 ```
 
 ## Release Process

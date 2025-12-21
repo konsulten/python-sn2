@@ -8,6 +8,12 @@
 
 set -e
 
+# Check if uv is installed
+if ! command -v uv &> /dev/null; then
+    echo "Error: uv is not installed. Please run ./scripts/setup first."
+    exit 1
+fi
+
 if [ -z "$1" ]; then
     echo "Usage: $0 <major|minor|patch>"
     exit 1
@@ -29,13 +35,13 @@ if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
 fi
 
 echo "Running tests..."
-pytest
+uv run pytest
 
 echo "Running linter..."
-ruff check .
+uv run ruff check .
 
 echo "Bumping $PART version..."
-bump-my-version bump "$PART"
+uv run bump-my-version bump "$PART"
 
 echo "Pushing changes and tags..."
 git push origin main --tags
