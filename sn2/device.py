@@ -78,14 +78,14 @@ class InformationData:
 
     """
 
-    dimmable: bool = False
-    model: str | None = None
-    sw_version: str | None = None
-    hw_version: str | None = None
-    name: str | None = None
-    wifi_dbm: int | None = None
-    wifi_ssid: str | None = None
-    unique_id: str | None = None
+    model: str
+    sw_version: str | None
+    hw_version: str | None
+    name: str
+    wifi_dbm: int | None
+    wifi_ssid: str | None
+    unique_id: str
+    dimmable: bool
 
     @staticmethod
     def convert_device_information_to_data(
@@ -105,18 +105,25 @@ class InformationData:
             A new InformationData instance populated with the device information.
 
         """
-        d = InformationData()
-        if info.hwm in LIGHT_MODELS:
-            d.dimmable = True
-        d.model = info.hwm
-        d.sw_version = info.nswv
-        d.hw_version = str(info.nhwv)
-        d.name = info.n
-        d.wifi_dbm = info.wr
-        d.wifi_ssid = info.ws
-        d.unique_id = info.lcu
-
-        return d
+        if info.lcu is None:
+            msg = "lcu (unique id) cannot be None, broken/corrupt device?"
+            raise ValueError(msg)
+        if info.hwm is None:
+            msg = "hwm (model) cannot be None, broken/corrupt device?"
+            raise ValueError(msg)
+        if info.n is None:
+            msg = "n (name) cannot be None, broken/corrupt device?"
+            raise ValueError(msg)
+        return InformationData(
+            model=info.hwm or "",
+            sw_version=info.nswv or "",
+            hw_version=str(info.nhwv) if info.nhwv is not None else "",
+            name=info.n,
+            wifi_dbm=info.wr,
+            wifi_ssid=info.ws,
+            unique_id=info.lcu,
+            dimmable=info.hwm in LIGHT_MODELS,
+        )
 
 
 @dataclass
@@ -269,11 +276,9 @@ class Device:
             clean_version = version.split("-")[0].split("+")[0]
             clean_min_version = min_version.split("-")[0].split("+")[0]
 
-            # Split version strings into components
             version_parts = [int(part) for part in clean_version.split(".")]
             min_version_parts = [int(part) for part in clean_min_version.split(".")]
 
-            # Pad shorter lists with zeros
             while len(version_parts) < len(min_version_parts):
                 version_parts.append(0)
             while len(min_version_parts) < len(version_parts):
@@ -366,13 +371,10 @@ class Device:
 
         """
         try:
-            settings = await self.get_settings()
+            self.settings = await self.get_settings()
             info = await self.get_info()
             self._version = info.information.sw_version
-            if info and settings:
-                self.settings = settings
-                self.info_data = info.information
-                self.initialized = True
+            self.info_data = info.information
         except Exception as e:
             msg = "Failed to initialize device"
             raise DeviceInitializationError(msg) from e
@@ -577,7 +579,7 @@ class Device:
 
         for attempt in range(1, retries + 1):
             try:
-                _LOGGER.info(
+                _LOGGER.debug(
                     "Sending command to %s (attempt %d/%d): %s",
                     self.host,
                     attempt,
@@ -617,29 +619,19 @@ class Device:
                 )
                 await self._emit(ConnectionStatus(connected=False))
             else:
-                _LOGGER.debug(
+                _LOGGER.info(
                     "Command %s sent successfully to %s", command_str, self.host
                 )
                 return
 
-            # Wait a bit before retrying (exponential backoff)
             if attempt < retries:
-                await asyncio.sleep(0.5 * (2**attempt))
+                await asyncio.sleep(0.5 * (2**attempt))  # (exponential backoff)
 
-        # If we get here, all retries failed
         _LOGGER.error(
             "Failed to send command to %s after %d attempts", self.host, retries
         )
         if last_exception:
             raise last_exception
-
-    async def is_supported(self) -> bool:
-        """Check if the device is supported based on model and firmware version."""
-        info = await self.get_info()
-        supported, _ = Device.is_device_supported(
-            model=info.information.model, device_version=info.information.sw_version
-        )
-        return supported
 
     async def _parse_settings(self, settings: Settings) -> list[Setting]:
         settings_list: list[Setting] = []
@@ -694,9 +686,8 @@ class Device:
                 session.post(url, json=settings) as response,
             ):
                 response.raise_for_status()
-
                 _LOGGER.debug("Updated settings at %s with %s", url, settings)
-        except Exception:
+        except:
             _LOGGER.exception("Failed to update settings at %s", url)
             raise
 
@@ -705,6 +696,7 @@ class Device:
         url = f"http://{self.host}:3000/settings"
         try:
             async with aiohttp.ClientSession() as session, session.get(url) as response:
+                response.raise_for_status()
                 json_resp = await response.json()
                 return await self._parse_settings(Settings(**json_resp))
         except Exception:
