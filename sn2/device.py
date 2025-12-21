@@ -50,6 +50,7 @@ class NotConnectedError(Exception):
 SWITCH_MODELS: Final = ["WBR-01"]
 PLUG_MODELS: Final = ["WPR-01", "WPO-01"]
 LIGHT_MODELS: Final = ["WBD-01", "WPD-01"]
+IN_WALL_MODELS: Final = ["WBR-01", "WBD-01"]
 
 
 @dataclass
@@ -115,9 +116,9 @@ class InformationData:
             msg = "n (name) cannot be None, broken/corrupt device?"
             raise ValueError(msg)
         return InformationData(
-            model=info.hwm or "",
-            sw_version=info.nswv or "",
-            hw_version=str(info.nhwv) if info.nhwv is not None else "",
+            model=info.hwm,
+            sw_version=info.nswv,
+            hw_version=str(info.nhwv) if info.nhwv is not None else None,
             name=info.n,
             wifi_dbm=info.wr,
             wifi_ssid=info.ws,
