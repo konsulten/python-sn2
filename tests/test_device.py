@@ -15,16 +15,15 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from sn2.data_model import InformationData
 from sn2.device import (
     ConnectionStatus,
     Device,
-    InformationData,
     InformationUpdate,
     OnOffSetting,
     SettingsUpdate,
     StateChange,
 )
-from sn2.json_model import DeviceInformation
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -51,8 +50,8 @@ class TestDevice:
         return Device(
             host="192.168.1.100",
             initial_settings=[],
-            initial_info_data=InformationData.convert_device_information_to_data(
-                DeviceInformation(lcu="testdeviceid", hwm="1.0.0", n="test device")
+            initial_info_data=InformationData.from_device_dict(
+                {"lcu": "testdeviceid", "hwm": "1.0.0", "n": "test device"}
             ),
             on_update=self.on_update_mock,
         )

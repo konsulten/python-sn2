@@ -10,12 +10,13 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any
 
 import aiohttp
 import websockets
 
-from sn2.json_model import DeviceInformation, Settings
+from .constants import IN_WALL_MODELS, LIGHT_MODELS, PLUG_MODELS, SWITCH_MODELS
+from .data_model import InformationData, Settings
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,86 +46,6 @@ class NotConnectedError(Exception):
         """Initialize the exception with an optional message."""
         self.message = message
         super().__init__(self.message)
-
-
-SWITCH_MODELS: Final = ["WBR-01"]
-PLUG_MODELS: Final = ["WPR-01", "WPO-01"]
-LIGHT_MODELS: Final = ["WBD-01", "WPD-01"]
-IN_WALL_MODELS: Final = ["WBR-01", "WBD-01"]
-
-
-@dataclass
-class InformationData:
-    """
-    Device information data container.
-
-    Attributes
-    ----------
-    dimmable : bool
-        Whether the device supports dimming.
-    model : str | None
-        The hardware model of the device.
-    sw_version : str | None
-        The software version of the device.
-    hw_version : str | None
-        The hardware version of the device.
-    name : str | None
-        The name of the device.
-    wifi_dbm : int | None
-        The WiFi signal strength in dBm.
-    wifi_ssid : str | None
-        The WiFi SSID the device is connected to.
-    unique_id : str | None
-        The unique identifier of the device.
-
-    """
-
-    model: str
-    sw_version: str | None
-    hw_version: str | None
-    name: str
-    wifi_dbm: int | None
-    wifi_ssid: str | None
-    unique_id: str
-    dimmable: bool
-
-    @staticmethod
-    def convert_device_information_to_data(
-        info: DeviceInformation,
-    ) -> "InformationData":
-        """
-        Create InformationData from a DeviceInformation object.
-
-        Parameters
-        ----------
-        info : DeviceInformation
-            The device information object to convert.
-
-        Returns
-        -------
-        InformationData
-            A new InformationData instance populated with the device information.
-
-        """
-        if info.lcu is None:
-            msg = "lcu (unique id) cannot be None, broken/corrupt device?"
-            raise ValueError(msg)
-        if info.hwm is None:
-            msg = "hwm (model) cannot be None, broken/corrupt device?"
-            raise ValueError(msg)
-        if info.n is None:
-            msg = "n (name) cannot be None, broken/corrupt device?"
-            raise ValueError(msg)
-        return InformationData(
-            model=info.hwm,
-            sw_version=info.nswv,
-            hw_version=str(info.nhwv) if info.nhwv is not None else None,
-            name=info.n,
-            wifi_dbm=info.wr,
-            wifi_ssid=info.ws,
-            unique_id=info.lcu,
-            dimmable=info.hwm in LIGHT_MODELS,
-        )
 
 
 @dataclass
@@ -319,6 +240,7 @@ class Device:
             model not in SWITCH_MODELS
             and model not in LIGHT_MODELS
             and model not in PLUG_MODELS
+            and model not in IN_WALL_MODELS
         ):
             return False, f"Unsupported model: {model}"
 
@@ -481,18 +403,15 @@ class Device:
                     await self._emit(StateChange(state_value))
                 case "information":
                     info_message = data.get("value")
-                    information = DeviceInformation(**info_message)
-                    _LOGGER.debug("information received %s", information)
+                    _LOGGER.debug("information received %s", info_message)
                     await self._emit(
                         InformationUpdate(
-                            InformationData.convert_device_information_to_data(
-                                information
-                            )
+                            InformationData.from_device_dict(info_message)
                         )
                     )
                 case "settings":
                     settings = data.get("value")
-                    settings = Settings(**settings)
+                    settings = Settings.from_device_dict(settings)
                     await self._emit(
                         SettingsUpdate(settings=await self._parse_settings(settings))
                     )
@@ -702,7 +621,9 @@ class Device:
             async with aiohttp.ClientSession() as session, session.get(url) as response:
                 response.raise_for_status()
                 json_resp = await response.json()
-                return await Device._parse_settings(Settings(**json_resp))
+                return await Device._parse_settings(
+                    Settings.from_device_dict(json_resp)
+                )
         except Exception:
             _LOGGER.exception("Failed to fetch settings from %s", url)
             raise
@@ -717,10 +638,7 @@ class Device:
         try:
             async with aiohttp.ClientSession() as session, session.get(url) as response:
                 response.raise_for_status()
-                information = DeviceInformation(**await response.json())
-                info_data = InformationData.convert_device_information_to_data(
-                    information
-                )
+                info_data = InformationData.from_device_dict(await response.json())
                 return InformationUpdate(info_data)
         except:
             _LOGGER.exception("Failed to fetch device information from %s:", url)
