@@ -43,10 +43,7 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     """Demonstrate device usage."""
     # Create a device instance
-    device = Device(host="192.168.1.144")
-
-    # Initialize the device
-    await device.initialize()
+    device = await Device.initiate_device(host="192.168.1.144")
 
     # Connect to the device
     await device.connect()
@@ -61,6 +58,8 @@ async def main() -> None:
 
     # Disconnect
     await device.disconnect()
+
+    await device.close()
 
 
 if __name__ == "__main__":
@@ -127,7 +126,7 @@ This will:
 
 ```bash
 # Install bump-my-version
-pip install bump-my-version
+uv pip install bump-my-version
 
 # Bump version
 bump-my-version bump patch  # or minor/major

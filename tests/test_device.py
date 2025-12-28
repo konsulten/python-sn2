@@ -47,12 +47,31 @@ class TestDevice:
     def device(self) -> Device:
         """Fixture to create a Device instance."""
         self.on_update_mock = AsyncMock()
+        # Create a proper mock session with async context manager support
+        mock_session = AsyncMock()
+
+        # Configure get method to return an async context manager
+        mock_response = Mock()
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+        mock_response.raise_for_status = Mock()
+        mock_response.json = AsyncMock(return_value={})
+        mock_session.get = Mock(return_value=mock_response)
+
+        # Configure post method similarly
+        mock_post_response = Mock()
+        mock_post_response.__aenter__ = AsyncMock(return_value=mock_post_response)
+        mock_post_response.__aexit__ = AsyncMock(return_value=None)
+        mock_post_response.raise_for_status = Mock()
+        mock_session.post = Mock(return_value=mock_post_response)
+
         return Device(
             host="192.168.1.100",
             initial_settings=[],
             initial_info_data=InformationData.from_device_dict(
                 {"lcu": "testdeviceid", "hwm": "1.0.0", "n": "test device"}
             ),
+            session=mock_session,
             on_update=self.on_update_mock,
         )
 
@@ -68,9 +87,7 @@ class TestDevice:
                 mocked_websocket.close = AsyncMock()
                 return mocked_websocket
 
-            async def mock_aexit(
-                _self: object, _exc: object, _val: object, _tb: object
-            ) -> None:
+            async def mock_aexit(_self: object, _exc: object, _val: object, _tb: object) -> None:
                 return
 
             mocked_connect.__aexit__ = mock_aexit
@@ -78,9 +95,7 @@ class TestDevice:
 
             yield mocked_connect
 
-    async def test_connect_disconnect_success(
-        self, mock_websocket: AsyncMock, device: Device
-    ) -> None:
+    async def test_connect_disconnect_success(self, mock_websocket: AsyncMock, device: Device) -> None:
         """Test successful connection and disconnection to the device."""
         mock_ws = mock_websocket.return_value.__aenter__.return_value
 
@@ -106,9 +121,7 @@ class TestDevice:
         latest_args = latest_update.args[0]
         assert latest_args.connected is False
 
-    async def test_connection_failure(
-        self, device: Device, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_connection_failure(self, device: Device, mock_websocket: AsyncMock) -> None:
         """Test connection failure handling."""
         mock_websocket.side_effect = ConnectionError("Connection error")
 
@@ -123,9 +136,7 @@ class TestDevice:
         ]
         assert len(disconnect_calls) > 0
 
-    async def test_information_message_processing(
-        self, device: Device, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_information_message_processing(self, device: Device, mock_websocket: AsyncMock) -> None:
         """Test processing of information message from device."""
         info_message = json.dumps(
             {
@@ -167,11 +178,7 @@ class TestDevice:
         await asyncio.sleep(0.2)  # Allow message processing
 
         # Verify information update callback was called
-        info_calls = [
-            call
-            for call in self.on_update_mock.call_args_list
-            if isinstance(call[0][0], InformationUpdate)
-        ]
+        info_calls = [call for call in self.on_update_mock.call_args_list if isinstance(call[0][0], InformationUpdate)]
         assert len(info_calls) > 0
         info_data = info_calls[0][0][0].information
         assert info_data.name == "Test Device"
@@ -180,9 +187,7 @@ class TestDevice:
 
         await device.disconnect()
 
-    async def test_settings_message_processing(
-        self, device: Device, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_settings_message_processing(self, device: Device, mock_websocket: AsyncMock) -> None:
         """Test processing of settings message from device."""
         settings_message = json.dumps(
             {
@@ -226,16 +231,12 @@ class TestDevice:
 
         # Verify settings update callback was called
         setting_updates = [
-            call.args[0]
-            for call in self.on_update_mock.call_args_list
-            if isinstance(call.args[0], SettingsUpdate)
+            call.args[0] for call in self.on_update_mock.call_args_list if isinstance(call.args[0], SettingsUpdate)
         ]
         assert len(setting_updates) == 1
         setting_update = setting_updates[0]
         # Filter OnOffSettings from the list
-        onoff_settings = [
-            s for s in setting_update.settings if isinstance(s, OnOffSetting)
-        ]
+        onoff_settings = [s for s in setting_update.settings if isinstance(s, OnOffSetting)]
 
         # Verify we have four OnOffSettings
         expected_settings_count = 4
@@ -253,17 +254,13 @@ class TestDevice:
         led_setting = next((s for s in onoff_settings if "Led" in s.name), None)
         assert led_setting is not None
         assert led_setting.is_enabled()
-        physical_button = next(
-            (s for s in onoff_settings if "Physical Button" in s.name), None
-        )
+        physical_button = next((s for s in onoff_settings if "Physical Button" in s.name), None)
         assert physical_button is not None
         assert physical_button.is_enabled()
 
         await device.disconnect()
 
-    async def test_state_change_message_processing(
-        self, device: Device, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_state_change_message_processing(self, device: Device, mock_websocket: AsyncMock) -> None:
         """Test processing of state change message from device."""
         state_message = json.dumps({"type": "state", "value": 0.75})
 
@@ -275,11 +272,7 @@ class TestDevice:
 
         # Verify state change callback was called
         expected_brightness = 0.75
-        state_calls = [
-            call
-            for call in self.on_update_mock.call_args_list
-            if isinstance(call[0][0], StateChange)
-        ]
+        state_calls = [call for call in self.on_update_mock.call_args_list if isinstance(call[0][0], StateChange)]
         assert len(state_calls) > 0
         assert state_calls[0][0][0].state == expected_brightness
 
@@ -315,27 +308,29 @@ class TestDevice:
             "b": {"s": 1, "v": 0, "bp": 0, "bpr": 0, "bi": 0},
         }
 
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            mock_response = AsyncMock()
-            mock_response.json = AsyncMock(return_value=mock_response_data)
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value.__aenter__.return_value = mock_response
+        # Configure the device's session mock
+        mock_response = Mock()
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+        mock_response.json = AsyncMock(return_value=mock_response_data)
+        mock_response.raise_for_status = Mock()
+        device._session.get = Mock(return_value=mock_response)
 
-            info = await device.get_info()
+        info = await device.get_info()
 
-            assert info is not None
-            assert isinstance(info, InformationUpdate)
-            assert info.information.name == "Test Device"
-            assert info.information.model == "WBD-01"
-            assert info.information.dimmable is True
+        assert info is not None
+        assert isinstance(info, InformationUpdate)
+        assert info.information.name == "Test Device"
+        assert info.information.model == "WBD-01"
+        assert info.information.dimmable is True
 
     async def test_get_info_failure(self, device: Device) -> None:
         """Test failure when fetching device information via REST API."""
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            mock_get.side_effect = RuntimeError("HTTP error")
+        # Configure the device's session mock to raise an error
+        device._session.get = Mock(side_effect=RuntimeError("HTTP error"))
 
-            with pytest.raises(RuntimeError, match="HTTP error"):
-                await device.get_info()
+        with pytest.raises(RuntimeError, match="HTTP error"):
+            await device.get_info()
 
     async def test_get_settings_success(self, device: Device) -> None:
         """Test fetching device settings via REST API."""
@@ -347,47 +342,46 @@ class TestDevice:
             "disable_led": 0,
         }
 
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            mock_response = AsyncMock()
-            mock_response.json = AsyncMock(return_value=mock_settings_data)
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value.__aenter__.return_value = mock_response
+        # Configure the device's session mock
+        mock_response = Mock()
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+        mock_response.json = AsyncMock(return_value=mock_settings_data)
+        mock_response.raise_for_status = Mock()
+        device._session.get = Mock(return_value=mock_response)
 
-            list_of_settings = await device.get_settings()
+        list_of_settings = await device.get_settings()
 
-            assert isinstance(list_of_settings, list)
+        assert isinstance(list_of_settings, list)
 
-            # Filter OnOffSettings from the list
-            onoff_settings = [
-                s for s in list_of_settings if isinstance(s, OnOffSetting)
-            ]
+        # Filter OnOffSettings from the list
+        onoff_settings = [s for s in list_of_settings if isinstance(s, OnOffSetting)]
 
-            # Verify we have three OnOffSettings
-            expected_onoff_count = 3
-            assert len(onoff_settings) == expected_onoff_count
+        # We should have four OnOffSettings (433Mhz, diy_mode, disable_led were provided)
+        # Note: disable_physical_button is not in mock_settings_data, so it won't be included
+        expected_onoff_count = 3
+        assert len(onoff_settings) == expected_onoff_count
 
-            # Find the 433MHz setting and verify it's off
-            # (value == 1 means disabled/off)
-            mhz_433_setting = next(
-                (s for s in onoff_settings if "433Mhz" in s.name), None
-            )
-            assert mhz_433_setting is not None
-            assert not mhz_433_setting.is_enabled()
-            cloud = next((s for s in onoff_settings if "Cloud Access" in s.name), None)
-            assert cloud is not None
-            assert not cloud.is_enabled()
+        # Find the 433MHz setting and verify it's off
+        # (value == 1 means disabled/off)
+        mhz_433_setting = next((s for s in onoff_settings if "433Mhz" in s.name), None)
+        assert mhz_433_setting is not None
+        assert not mhz_433_setting.is_enabled()
+        cloud = next((s for s in onoff_settings if "Cloud Access" in s.name), None)
+        assert cloud is not None
+        assert not cloud.is_enabled()
 
-            led_setting = next((s for s in onoff_settings if "Led" in s.name), None)
-            assert led_setting is not None
-            assert led_setting.is_enabled()
+        led_setting = next((s for s in onoff_settings if "Led" in s.name), None)
+        assert led_setting is not None
+        assert led_setting.is_enabled()
 
     async def test_get_settings_failure(self, device: Device) -> None:
         """Test failure when fetching device settings via REST API."""
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            mock_get.side_effect = RuntimeError("HTTP error")
+        # Configure the device's session mock to raise an error
+        device._session.get = Mock(side_effect=RuntimeError("HTTP error"))
 
-            with pytest.raises(RuntimeError, match="HTTP error"):
-                await device.get_settings()
+        with pytest.raises(RuntimeError, match="HTTP error"):
+            await device.get_settings()
 
     async def test_turn_on(self, device: Device, mock_websocket: AsyncMock) -> None:
         """Test turning on the device."""
@@ -402,8 +396,7 @@ class TestDevice:
         turn_on_calls = [
             call
             for call in mock_ws.send.call_args_list
-            if json.loads(call[0][0]).get("type") == "state"
-            and json.loads(call[0][0]).get("value") == -1
+            if json.loads(call[0][0]).get("type") == "state" and json.loads(call[0][0]).get("value") == -1
         ]
         assert len(turn_on_calls) > 0
 
@@ -422,8 +415,7 @@ class TestDevice:
         turn_off_calls = [
             call
             for call in mock_ws.send.call_args_list
-            if json.loads(call[0][0]).get("type") == "state"
-            and json.loads(call[0][0]).get("value") == 0
+            if json.loads(call[0][0]).get("type") == "state" and json.loads(call[0][0]).get("value") == 0
         ]
         assert len(turn_off_calls) > 0
 
@@ -446,8 +438,7 @@ class TestDevice:
         turn_on_calls = [
             call
             for call in mock_ws.send.call_args_list
-            if json.loads(call[0][0]).get("type") == "state"
-            and json.loads(call[0][0]).get("on")
+            if json.loads(call[0][0]).get("type") == "state" and json.loads(call[0][0]).get("on")
         ]
         assert len(turn_on_calls) > 0
 
@@ -470,16 +461,13 @@ class TestDevice:
         turn_off_calls = [
             call
             for call in mock_ws.send.call_args_list
-            if json.loads(call[0][0]).get("type") == "state"
-            and not json.loads(call[0][0]).get("on")
+            if json.loads(call[0][0]).get("type") == "state" and not json.loads(call[0][0]).get("on")
         ]
         assert len(turn_off_calls) > 0
 
         await device.disconnect()
 
-    async def test_set_brightness(
-        self, device: Device, mock_websocket: AsyncMock
-    ) -> None:
+    async def test_set_brightness(self, device: Device, mock_websocket: AsyncMock) -> None:
         """Test setting device brightness."""
         mock_ws = mock_websocket.return_value.__aenter__.return_value
 
@@ -493,8 +481,7 @@ class TestDevice:
         brightness_calls = [
             call
             for call in mock_ws.send.call_args_list
-            if json.loads(call[0][0]).get("type") == "state"
-            and json.loads(call[0][0]).get("value") == test_brightness
+            if json.loads(call[0][0]).get("type") == "state" and json.loads(call[0][0]).get("value") == test_brightness
         ]
         assert len(brightness_calls) > 0
 
@@ -521,8 +508,7 @@ class TestDevice:
         toggle_calls = [
             call
             for call in mock_ws.send.call_args_list
-            if json.loads(call[0][0]).get("type") == "state"
-            and json.loads(call[0][0]).get("value") == -1
+            if json.loads(call[0][0]).get("type") == "state" and json.loads(call[0][0]).get("value") == -1
         ]
         assert len(toggle_calls) > 0
 

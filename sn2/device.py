@@ -15,7 +15,7 @@ from typing import Any
 import aiohttp
 import websockets
 
-from .constants import IN_WALL_MODELS, LIGHT_MODELS, PLUG_MODELS, SWITCH_MODELS
+from .constants import DEVICE_PORT, IN_WALL_MODELS, LIGHT_MODELS, PLUG_MODELS, SWITCH_MODELS
 from .data_model import InformationData, Settings
 
 _LOGGER = logging.getLogger(__name__)
@@ -107,9 +107,7 @@ class OnOffSetting(Setting):
 
     """
 
-    def __init__(
-        self, name: str, param_key: str, current: Any, on_value: Any, off_value: Any
-    ) -> None:
+    def __init__(self, name: str, param_key: str, current: Any, on_value: Any, off_value: Any) -> None:
         """
         Initialize a Device instance.
 
@@ -176,7 +174,6 @@ class SettingsUpdate:
 UpdateEvent = ConnectionStatus | InformationUpdate | SettingsUpdate | StateChange
 
 
-@staticmethod
 def _is_version_compatible(version: str | None, min_version: str) -> bool:
     """Check if a version string meets minimum version requirements."""
     if version is None:
@@ -227,9 +224,7 @@ class Device:
     """
 
     @staticmethod
-    def is_device_supported(
-        model: str | None, device_version: str | None
-    ) -> tuple[bool, str]:
+    def is_device_supported(model: str | None, device_version: str | None) -> tuple[bool, str]:
         """Check if a device is supported based on model and firmware version."""
         # Check if this is a supported device
         if model is None:
@@ -262,7 +257,10 @@ class Device:
         host: str,
         initial_settings: list[Setting],
         initial_info_data: InformationData,
+        session: aiohttp.ClientSession,
         on_update: Callable[[UpdateEvent], Awaitable[None] | None] | None = None,
+        *,
+        owns_session: bool = False,
     ) -> None:
         """Initialize the Device client. Should not be used see initiate_device."""
         self.host = host
@@ -272,6 +270,8 @@ class Device:
         self._version = initial_info_data.sw_version
         self.info_data = initial_info_data
         self.settings = initial_settings
+        self._session = session
+        self._owns_session = owns_session
 
         # Callbacks
         self._on_update = on_update
@@ -280,27 +280,45 @@ class Device:
     async def initiate_device(
         host: str,
         on_update: Callable[[UpdateEvent], Awaitable[None] | None] | None = None,
+        session: aiohttp.ClientSession | None = None,
     ) -> "Device":
         """
         Initialize the device by fetching settings and information.
 
-        Raises
-        ------
-        DeviceInitializationError
-            If fetching settings or information fails.
+        Args:
+            host: The device hostname or IP address.
+            on_update: Optional callback for device update events.
+            session: Optional aiohttp session. If None, a session will be created
+                    and managed internally. The device will close it on cleanup.
+
+        Raises:
+            DeviceInitializationError: If fetching settings or information fails.
 
         """
+        owns_session = session is None
+        created_session = None
+
         try:
-            settings = await Device._get_settings(host)
-            info = await Device._get_info(host)
+            if session is None:
+                session = aiohttp.ClientSession()
+                created_session = session
+
+            settings = await Device._get_settings(host, session)
+            info = await Device._get_info(host, session)
+
             return Device(
                 host=host,
                 initial_settings=settings,
                 initial_info_data=info.information,
                 on_update=on_update,
+                session=session,
+                owns_session=owns_session,
             )
         except Exception as e:
             msg = "Failed to initialize device"
+            # Only close session if we created it and initialization failed
+            if created_session:
+                await created_session.close()
             raise DeviceInitializationError(msg) from e
 
     async def _emit(self, event: UpdateEvent) -> None:
@@ -329,7 +347,7 @@ class Device:
     # Set up connection and cleanup
     async def _handle_connection(self) -> None:
         """Start the websocket client for the device."""
-        uri = f"ws://{self.host}:3000/live"
+        uri = f"ws://{self.host}:{DEVICE_PORT}/live"
 
         while True:
             try:
@@ -386,6 +404,25 @@ class Device:
             self._websocket = None
         await self._emit(ConnectionStatus(connected=False))
 
+    async def close(self) -> None:
+        """Close the device connection and clean up resources."""
+        await self.disconnect()
+        if self._owns_session and self._session:
+            await self._session.close()
+
+    async def __aenter__(self) -> "Device":
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        """Async context manager exit."""
+        await self.close()
+
     async def _process_message(self, message: str) -> None:
         """Process a message from the device."""
         try:
@@ -404,24 +441,18 @@ class Device:
                 case "information":
                     info_message = data.get("value")
                     _LOGGER.debug("information received %s", info_message)
-                    await self._emit(
-                        InformationUpdate(
-                            InformationData.from_device_dict(info_message)
-                        )
-                    )
+                    await self._emit(InformationUpdate(InformationData.from_device_dict(info_message)))
                 case "settings":
                     settings = data.get("value")
                     settings = Settings.from_device_dict(settings)
-                    await self._emit(
-                        SettingsUpdate(settings=await self._parse_settings(settings))
-                    )
+                    await self._emit(SettingsUpdate(settings=await self._parse_settings(settings)))
                 case "ack":
                     _LOGGER.debug("Ack received?")
                 case unknown:
                     _LOGGER.error("unknown data received %s", unknown)
 
         except json.JSONDecodeError:
-            _LOGGER.exception("Invalid JSON received %s", unknown)
+            _LOGGER.exception("Invalid JSON received %s", message)
         except Exception:
             _LOGGER.exception("Error processing message %s", message)
 
@@ -488,7 +519,7 @@ class Device:
             TimeoutError: If the command send operation times out.
 
         """
-        if self._websocket is None and not self._trying_to_connect:
+        if self._websocket is None or not self._trying_to_connect:
             _LOGGER.error(
                 "Cannot send command to %s - Please connect() first",
                 self.host,
@@ -540,17 +571,13 @@ class Device:
                 )
                 await self._emit(ConnectionStatus(connected=False))
             else:
-                _LOGGER.info(
-                    "Command %s sent successfully to %s", command_str, self.host
-                )
+                _LOGGER.info("Command %s sent successfully to %s", command_str, self.host)
                 return
 
             if attempt < retries:
                 await asyncio.sleep(0.5 * (2**attempt))  # (exponential backoff)
 
-        _LOGGER.error(
-            "Failed to send command to %s after %d attempts", self.host, retries
-        )
+        _LOGGER.error("Failed to send command to %s after %d attempts", self.host, retries)
         if last_exception:
             raise last_exception
 
@@ -601,49 +628,44 @@ class Device:
 
     async def update_setting(self, settings: dict[str, Any]) -> None:
         """Update device settings via REST API."""
-        url = f"http://{self.host}:3000/settings"
+        url = f"http://{self.host}:{DEVICE_PORT}/settings"
         try:
-            async with (
-                aiohttp.ClientSession() as session,
-                session.post(url, json=settings) as response,
-            ):
+            async with self._session.post(url, json=settings) as response:
                 response.raise_for_status()
                 _LOGGER.debug("Updated settings at %s with %s", url, settings)
-        except:
+        except Exception:
             _LOGGER.exception("Failed to update settings at %s", url)
             raise
 
     @staticmethod
-    async def _get_settings(host: str) -> list[Setting]:
+    async def _get_settings(host: str, session: aiohttp.ClientSession) -> list[Setting]:
         """Fetch device settings via REST API."""
-        url = f"http://{host}:3000/settings"
+        url = f"http://{host}:{DEVICE_PORT}/settings"
         try:
-            async with aiohttp.ClientSession() as session, session.get(url) as response:
+            async with session.get(url) as response:
                 response.raise_for_status()
                 json_resp = await response.json()
-                return await Device._parse_settings(
-                    Settings.from_device_dict(json_resp)
-                )
+                return await Device._parse_settings(Settings.from_device_dict(json_resp))
         except Exception:
             _LOGGER.exception("Failed to fetch settings from %s", url)
             raise
 
     async def get_settings(self) -> list[Setting]:
         """Fetch device settings via REST API."""
-        return await self._get_settings(self.host)
+        return await self._get_settings(self.host, self._session)
 
     @staticmethod
-    async def _get_info(host: str) -> InformationUpdate:
-        url = f"http://{host}:3000/info"
+    async def _get_info(host: str, session: aiohttp.ClientSession) -> InformationUpdate:
+        url = f"http://{host}:{DEVICE_PORT}/info"
         try:
-            async with aiohttp.ClientSession() as session, session.get(url) as response:
+            async with session.get(url) as response:
                 response.raise_for_status()
                 info_data = InformationData.from_device_dict(await response.json())
                 return InformationUpdate(info_data)
-        except:
+        except Exception:
             _LOGGER.exception("Failed to fetch device information from %s:", url)
             raise
 
     async def get_info(self) -> InformationUpdate:
         """Fetch device information via REST API."""
-        return await self._get_info(self.host)
+        return await self._get_info(self.host, self._session)
