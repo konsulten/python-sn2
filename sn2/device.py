@@ -15,7 +15,14 @@ from typing import Any
 import aiohttp
 import websockets
 
-from .constants import DEVICE_PORT, IN_WALL_MODELS, LIGHT_MODELS, PLUG_MODELS, SWITCH_MODELS
+from .constants import (
+    CONNECTION_TIMEOUT_IN_SECONDS,
+    DEVICE_PORT,
+    IN_WALL_MODELS,
+    LIGHT_MODELS,
+    PLUG_MODELS,
+    SWITCH_MODELS,
+)
 from .data_model import InformationData, Settings
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,28 +31,9 @@ _LOGGER = logging.getLogger(__name__)
 class DeviceInitializationError(Exception):
     """Exception raised when device initialization fails."""
 
-    def __init__(self, message: str = "Failed to initialize device") -> None:
-        """Initialize the exception with an optional message."""
-        self.message = message
-        super().__init__(self.message)
-
-
-class DeviceUnsupportedError(Exception):
-    """Exception raised when device is unsupported."""
-
-    def __init__(self, message: str = "Device not supported") -> None:
-        """Initialize the exception with an optional message."""
-        self.message = message
-        super().__init__(self.message)
-
 
 class NotConnectedError(Exception):
     """Exception raised when device has not been connected before running commands."""
-
-    def __init__(self, message: str = "Device not connected") -> None:
-        """Initialize the exception with an optional message."""
-        self.message = message
-        super().__init__(self.message)
 
 
 @dataclass
@@ -264,9 +252,10 @@ class Device:
     ) -> None:
         """Initialize the Device client. Should not be used see initiate_device."""
         self.host = host
-        self._trying_to_connect = False
         self._websocket: websockets.ClientConnection | None = None
         self._ws_task: asyncio.Task[None] | None = None
+        self._connection_ready = asyncio.Event()
+        self._send_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
         self._version = initial_info_data.sw_version
         self.info_data = initial_info_data
         self.settings = initial_settings
@@ -332,59 +321,130 @@ class Device:
         except Exception:
             _LOGGER.exception("on_update callback failed for %s", event)
 
-    async def connect(self) -> None:
+    def is_connected(self) -> bool:
+        """
+        Check if the WebSocket connection is established and ready.
+
+        Returns:
+            bool: True if connected and ready to send commands.
+
+        """
+        return self._connection_ready.is_set() and self._websocket is not None
+
+    async def connect(self, *, wait_ready: bool = False) -> None:
         """
         Establish a connection to the device via websocket.
 
-        Starts the websocket client task for handling device communication.
-        """
-        if self._ws_task is not None:
-            return  # Already connected
+        Args:
+            wait_ready: If True, wait until the WebSocket connection is established
+                       before returning. If False, start the connection task and
+                       return immediately.
 
-        self._trying_to_connect = True
-        self._ws_task = asyncio.create_task(self._handle_connection())
+        Raises:
+            TimeoutError: If wait_ready=True and connection is not established within 10 seconds.
+
+        """
+        if self._ws_task is None:
+            self._ws_task = asyncio.create_task(self._handle_connection())
+
+        if wait_ready:
+            try:
+                async with asyncio.timeout(CONNECTION_TIMEOUT_IN_SECONDS):
+                    await self._connection_ready.wait()
+            except TimeoutError as e:
+                msg = f"Failed to connect to {self.host} within 10 seconds"
+                raise TimeoutError(msg) from e
 
     # Set up connection and cleanup
+    async def _send_loop(self, websocket: websockets.ClientConnection) -> None:
+        """Send commands from the queue to the WebSocket."""
+        try:
+            while True:
+                command_str = await self._send_queue.get()
+                try:
+                    await websocket.send(command_str)
+                    if command_str == json.dumps({"type": "login", "value": ""}):
+                        self._connection_ready.set()
+                    _LOGGER.debug("Sent queued command: %s", command_str)
+                except websockets.exceptions.ConnectionClosed:
+                    _LOGGER.warning("Connection closed while sending command: %s", command_str)
+                    # Put the command back in the queue for retry after reconnection
+                    await self._send_queue.put(command_str)
+                    break
+                except Exception:
+                    _LOGGER.exception("Error sending command: %s", command_str)
+                finally:
+                    self._send_queue.task_done()
+        except asyncio.CancelledError:
+            _LOGGER.debug("Send loop cancelled")
+            raise
+
+    async def _receive_loop(self, websocket: websockets.ClientConnection) -> None:
+        """Receive and process messages from the WebSocket."""
+        try:
+            while True:
+                message = await websocket.recv()
+                _LOGGER.debug("Received message: %s", message)
+                match message:
+                    case bytes():
+                        await self._process_message(message.decode("utf-8"))
+                    case str():
+                        await self._process_message(message)
+        except websockets.exceptions.ConnectionClosed:
+            _LOGGER.debug("WebSocket connection closed")
+        except asyncio.CancelledError:
+            _LOGGER.debug("Receive loop cancelled")
+            raise
+
     async def _handle_connection(self) -> None:
         """Start the websocket client for the device."""
         uri = f"ws://{self.host}:{DEVICE_PORT}/live"
+
+        def _raise_task_exception(task: asyncio.Task[None]) -> None:
+            """Raise exception from a task if present."""
+            if not task.cancelled():
+                exc = task.exception()
+                if exc:
+                    raise exc
 
         while True:
             try:
                 async with websockets.connect(uri) as websocket:
                     self._websocket = websocket
-                    # Set device as available since connection is established
-
-                    # Send login message immediately after connection
-                    login_message = {"type": "login", "value": ""}
-                    await websocket.send(json.dumps(login_message))
-
                     await self._emit(ConnectionStatus(connected=True))
-                    _LOGGER.debug("Sent login message: %s", login_message)
 
-                    # Listen for messages from the device
-                    while True:
-                        try:
-                            message = await websocket.recv()
-                            _LOGGER.debug("Received message: %s", message)
-                            # Process the message and update entity states
-                            match message:
-                                case bytes():
-                                    await self._process_message(message.decode("utf-8"))
-                                case str():
-                                    await self._process_message(message)
+                    # Queue login message to be sent by send loop
+                    login_message = {"type": "login", "value": ""}
+                    await self._send_queue.put(json.dumps(login_message))
+                    _LOGGER.debug("Queued login message: %s", login_message)
 
-                        except websockets.exceptions.ConnectionClosed:
-                            await self._emit(ConnectionStatus(connected=False))
+                    # Create send and receive tasks
+                    send_task = asyncio.create_task(self._send_loop(websocket))
+                    receive_task = asyncio.create_task(self._receive_loop(websocket))
 
-                            break
-                        await asyncio.sleep(1)
+                    # Wait for either task to complete (indicates connection closed)
+                    done, pending = await asyncio.wait({send_task, receive_task}, return_when=asyncio.FIRST_COMPLETED)
+
+                    # Cancel remaining tasks
+                    for task in pending:
+                        task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await task
+
+                    # Check for exceptions in completed tasks
+                    for task in done:
+                        _raise_task_exception(task)
+
             except asyncio.CancelledError:
                 break
             except BaseException:
                 # Set device as unavailable when connection attempt fails
                 await self._emit(ConnectionStatus(connected=False))
                 _LOGGER.exception("Lost connection to: %s", self.host)
+            finally:
+                # Clear connection ready flag
+                self._connection_ready.clear()
+
             # Wait before trying to reconnect
             try:
                 await asyncio.sleep(1)
@@ -393,11 +453,13 @@ class Device:
 
     async def disconnect(self) -> None:
         """Stop the websocket client."""
-        self._trying_to_connect = False
+        self._connection_ready.clear()
+
         if self._ws_task is not None:
             self._ws_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._ws_task
+            self._ws_task = None
 
         if self._websocket is not None:
             await self._websocket.close()
@@ -497,89 +559,49 @@ class Device:
     async def send_command(
         self,
         command: dict[str, Any],
-        retries: int = 3,
+        *,
+        wait_for_connection: bool = True,
     ) -> None:
         """
         Send a command to the device via WebSocket.
 
-        This method serializes the command dictionary to JSON and sends it through
-        the WebSocket connection. It handles connection errors and updates the
-        connection status accordingly.
+        Commands are queued and sent asynchronously through a dedicated send loop.
+        This ensures thread-safe sending and proper command ordering.
 
         Args:
             command: A dictionary containing the command data to send to the device.
-            timeout_seconds: Maximum time in seconds to wait for the send operation.
-            retries: Number of retry attempts if the command fails to send.
+            wait_for_connection: If True, wait for the connection to be ready before
+                               queuing the command. If False, queue immediately.
+            connection_timeout: Maximum time in seconds to wait for connection when
+                              wait_for_connection=True.
 
         Returns:
             None
 
         Raises:
-            NotConnectedError: If there is no active WebSocket connection.
-            TimeoutError: If the command send operation times out.
+            NotConnectedError: If not trying to connect.
+            TimeoutError: If wait_for_connection=True and connection is not established
+                        within connection_timeout.
 
         """
-        if self._websocket is None or not self._trying_to_connect:
-            _LOGGER.error(
-                "Cannot send command to %s - Please connect() first",
-                self.host,
-            )
-            raise NotConnectedError
+        if self._ws_task is None:
+            msg = f"Cannot send command to {self.host} - Please connect() first"
+            _LOGGER.error(msg)
+            raise NotConnectedError(msg)
 
-        command_str = json.dumps(command)
-        last_exception: Exception | None = None
-
-        for attempt in range(1, retries + 1):
+        # Wait for connection to be ready if requested
+        if wait_for_connection and not self.is_connected():
             try:
-                _LOGGER.debug(
-                    "Sending command to %s (attempt %d/%d): %s",
-                    self.host,
-                    attempt,
-                    retries,
-                    command_str,
-                )
-                if self._websocket:
-                    await self._websocket.send(command_str)
-            except websockets.exceptions.ConnectionClosedError as err:
-                last_exception = err
-                _LOGGER.exception(
-                    "Failed to send command to %s - connection closed: %s %s",
-                    self.host,
-                    err.code,
-                    err.reason,
-                )
-                # Mark entity as unavailable when command fails due to connection
-                await self._emit(ConnectionStatus(connected=False))
-            except websockets.exceptions.ConnectionClosedOK as err:
-                last_exception = err
-                _LOGGER.exception(
-                    "Failed to send command to %s - connection closed due to : %s %s",
-                    self.host,
-                    err.code,
-                    err.reason,
-                )
-                # Mark entity as unavailable when command fails due to connection
-                await self._emit(ConnectionStatus(connected=False))
-                raise NotConnectedError from err
-            except Exception as err:
-                last_exception = err
-                _LOGGER.exception(
-                    "Failed to send command to %s (attempt %d/%d)",
-                    self.host,
-                    attempt,
-                    retries,
-                )
-                await self._emit(ConnectionStatus(connected=False))
-            else:
-                _LOGGER.info("Command %s sent successfully to %s", command_str, self.host)
-                return
+                async with asyncio.timeout(CONNECTION_TIMEOUT_IN_SECONDS):
+                    await self._connection_ready.wait()
+            except TimeoutError as e:
+                msg = f"Connection to {self.host} not ready within {CONNECTION_TIMEOUT_IN_SECONDS} seconds"
+                raise TimeoutError(msg) from e
 
-            if attempt < retries:
-                await asyncio.sleep(0.5 * (2**attempt))  # (exponential backoff)
-
-        _LOGGER.error("Failed to send command to %s after %d attempts", self.host, retries)
-        if last_exception:
-            raise last_exception
+        # Queue the command for sending
+        command_str = json.dumps(command)
+        await self._send_queue.put(command_str)
+        _LOGGER.debug("Queued command for %s: %s", self.host, command_str)
 
     @staticmethod
     async def _parse_settings(settings: Settings) -> list[Setting]:

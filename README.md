@@ -53,8 +53,7 @@ async def main() -> None:
 
     # Get device information
     info = await device.get_info()
-    if info:
-        logger.info("Device: %s", info.information.name)
+    logger.info("Device: %s", info.information.name)
 
     # Disconnect
     await device.disconnect()
