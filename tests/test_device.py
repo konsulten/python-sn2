@@ -130,8 +130,7 @@ class TestDevice:
         mock_ws = mock_websocket.return_value.mock_ws
 
         await device.connect()
-        await asyncio.sleep(0.05)  # Give send_loop time to process
-        await asyncio.sleep(0)  # Allow the task to start
+        await asyncio.sleep(0.1)
 
         # Verify login message was sent
         assert json.dumps({"type": "login", "value": ""}) in mock_ws.messages_sent
@@ -157,8 +156,7 @@ class TestDevice:
         mock_websocket.side_effect = ConnectionError("Connection error")
 
         await device.connect()
-        await asyncio.sleep(0.05)  # Give send_loop time to process
-        await asyncio.sleep(0.1)  # Allow the task to attempt connection
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         # Verify disconnect callback was called due to connection failure
         disconnect_calls = [
@@ -208,8 +206,7 @@ class TestDevice:
         mock_ws.recv = AsyncMock(side_effect=[info_message, websockets.exceptions.ConnectionClosed(None, None)])
 
         await device.connect()
-        await asyncio.sleep(0.05)  # Give send_loop time to process
-        await asyncio.sleep(0.1)  # Allow message processing
+        await asyncio.sleep(0.1)
 
         # Verify information update callback was called
         info_calls = [call for call in self.on_update_mock.call_args_list if isinstance(call[0][0], InformationUpdate)]
@@ -262,8 +259,7 @@ class TestDevice:
         mock_ws.recv = AsyncMock(side_effect=[settings_message, websockets.exceptions.ConnectionClosed(None, None)])
 
         await device.connect()
-        await asyncio.sleep(0.05)  # Give send_loop time to process
-        await asyncio.sleep(0.1)  # Allow message processing
+        await asyncio.sleep(0.1)
 
         # Verify settings update callback was called
         setting_updates = [
@@ -305,8 +301,7 @@ class TestDevice:
         mock_ws.recv = AsyncMock(side_effect=[state_message, websockets.exceptions.ConnectionClosed(None, None)])
 
         await device.connect()
-        await asyncio.sleep(0.05)  # Give send_loop time to process
-        await asyncio.sleep(0.1)  # Allow message processing
+        await asyncio.sleep(0.1)
 
         # Verify state change callback was called
         expected_brightness = 0.75
@@ -428,8 +423,7 @@ class TestDevice:
         await device.connect(wait_ready=True)
 
         await device.turn_on()
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         # Verify turn on command was sent
         turn_on_commands = [
@@ -448,7 +442,7 @@ class TestDevice:
         await device.connect(wait_ready=True)
 
         await device.turn_off()
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         # Verify turn off command was sent
         turn_off_commands = [
@@ -471,7 +465,7 @@ class TestDevice:
         await device.connect(wait_ready=True)
 
         await device.turn_on()
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         # Verify turn on command was sent
         turn_on_commands = [
@@ -492,7 +486,7 @@ class TestDevice:
         await device.connect(wait_ready=True)
 
         await device.turn_off()
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         # Verify turn off command was sent
         turn_off_commands = [
@@ -512,7 +506,7 @@ class TestDevice:
 
         test_brightness = 0.5
         await device.set_brightness(test_brightness)
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         # Verify brightness command was sent
         brightness_commands = [
@@ -539,7 +533,7 @@ class TestDevice:
         await device.connect(wait_ready=True)
 
         await device.toggle()
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
+        await asyncio.sleep(0.1)
 
         # Verify toggle command was sent (value -1)
         toggle_commands = [
@@ -596,7 +590,7 @@ class TestDevice:
         mock_ws.recv = AsyncMock(side_effect=[unknown_message, websockets.exceptions.ConnectionClosed(None, None)])
 
         await device.connect()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         await device.disconnect()
 

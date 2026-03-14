@@ -10,14 +10,15 @@ from .constants import LIGHT_MODELS
 class InformationData:
     """Device information data container."""
 
-    model: str
-    sw_version: str | None
+    dimmable: bool
     hw_version: str | None
+    model: str
     name: str
+    sw_version: str | None
+    unique_id: str
+    uptime_seconds: int | None
     wifi_dbm: int | None
     wifi_ssid: str | None
-    unique_id: str
-    dimmable: bool
 
     @staticmethod
     def from_device_dict(
@@ -37,6 +38,7 @@ class InformationData:
             msg = "n (name) cannot be None, broken/corrupt device?"
             raise ValueError(msg)
         hw_version = info.get("nhwv")
+        uptime_seconds = info.get("u")
         return InformationData(
             model=hwm,
             sw_version=info.get("nswv"),
@@ -46,18 +48,27 @@ class InformationData:
             wifi_ssid=info.get("ws"),
             unique_id=uniq_id,
             dimmable=hwm in LIGHT_MODELS,
+            uptime_seconds=uptime_seconds,
         )
 
-
+@dataclass(frozen=True, slots=True)
+class Settings433Mhz:
+    """Represents 433 MHz settings for the device."""
+    disable_433: int | None = None
+    transmitter_send_off_dim_level: float | None = None
+        
 @dataclass(frozen=True, slots=True)
 class Settings:
     """Represents device settings with various configuration attributes."""
 
     name: str | None = None
     disable_physical_button: int | None = None
-    disable_433: int | None = None
     disable_led: int | None = None
     diy_mode: int | None = None
+    dimmer_minimum_level: float | None = None
+    settings_433_mhz: Settings433Mhz | None = None
+
+    
 
     @staticmethod
     def from_device_dict(data: dict) -> "Settings":
@@ -65,7 +76,11 @@ class Settings:
         return Settings(
             name=data.get("name"),
             disable_physical_button=data.get("disable_physical_button"),
-            disable_433=data.get("disable_433"),
             disable_led=data.get("disable_led"),
             diy_mode=data.get("diy_mode"),
+            dimmer_minimum_level=data.get("dimmer_min_dim"),
+            settings_433_mhz=Settings433Mhz(
+                disable_433=data.get("disable_433"),
+                transmitter_send_off_dim_level=data.get("dimmer_off_level"),
+            )
         )
