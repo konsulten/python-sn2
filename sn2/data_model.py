@@ -56,7 +56,13 @@ class Settings433Mhz:
     """Represents 433 MHz settings for the device."""
     disable_433: int | None = None
     transmitter_send_off_dim_level: float | None = None
-        
+    dimmer_on_start_level: float | None = None
+    dimmer_off_level: float | None = None
+    disable_on_transmitters: int | None = None
+    disable_off_transmitters: int | None = None
+    toggle_433: int | None = None
+    blink_on_433_on: int | None = None
+    
 @dataclass(frozen=True, slots=True)
 class Settings:
     """Represents device settings with various configuration attributes."""
@@ -66,9 +72,9 @@ class Settings:
     disable_led: int | None = None
     diy_mode: int | None = None
     dimmer_minimum_level: float | None = None
+    state_after_powerloss: int | None = None
+    disable_multi_press: int | None = None
     settings_433_mhz: Settings433Mhz | None = None
-
-    
 
     @staticmethod
     def from_device_dict(data: dict) -> "Settings":
@@ -79,8 +85,16 @@ class Settings:
             disable_led=data.get("disable_led"),
             diy_mode=data.get("diy_mode"),
             dimmer_minimum_level=data.get("dimmer_min_dim"),
+            state_after_powerloss=data.get("state_after_powerloss"),
+            disable_multi_press=data.get("disable_multi_press"),
             settings_433_mhz=Settings433Mhz(
                 disable_433=data.get("disable_433"),
                 transmitter_send_off_dim_level=data.get("dimmer_off_level"),
+                dimmer_on_start_level=data.get("dimmer_on_start_level"),
+                dimmer_off_level=data.get("dimmer_off_level"),
+                disable_on_transmitters=data.get("disable_on_transmitters"),
+                disable_off_transmitters=data.get("disable_off_transmitters"),
+                toggle_433=data.get("toggle_433"),
+                blink_on_433_on=data.get("blink_on_433_on"),
             )
         )

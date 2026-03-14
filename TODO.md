@@ -1,7 +1,7 @@
 Features to be added
 * For dev version 1.1.8 > Handle ACK, send _id  {"_id":<integer>}  verify receive {"type":"ack","value":<integer>}
 * Set origin for http requests
-* Settings
+<!-- * Settings
   * Powerstate after outage - "state_after_powerloss":	2=Previous state, 1=On, 0=Off
   * Dimmer minimum - "dimmer_min_dim": 0.0-1.0
   * Double click for 100% dim level - "disable_multi_press": 0=enabled, 1=disabled
@@ -11,7 +11,7 @@ Features to be added
     * Configure allow ON from transmitters - "disable_on_transmitters": 0=enabled, 1=disabled
     * Configure allow OFF from transmitters - "disable_off_transmitters": 0=enabled, 1=disabled
     * Enable ON to toggle device from transmitters - "toggle_433": 0=disabled, 1=enabled
-	* Blink LED when device is receiving from transmitter - "blink_on_433_on":	0 = disable, 1=enabled
+	* Blink LED when device is receiving from transmitter - "blink_on_433_on":	0 = disable, 1=enabled -->
 * Information data
  * Uptime in seconds - "u"
  * \# of Paired transmitters - "tsc"

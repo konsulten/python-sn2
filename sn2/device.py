@@ -656,12 +656,20 @@ class Device:
     async def _parse_settings(settings: Settings) -> list[Setting]:
         settings_list: list[Setting] = []
         if settings_433 := settings.settings_433_mhz:
-            if settings_433.transmitter_send_off_dim_level is not None:
+            if settings_433.dimmer_on_start_level is not None:
+                settings_list.append(
+                    FloatNumberSetting(
+                        param_key="dimmer_on_start_level",
+                        name="433Mhz Dimmer On Start Level",
+                        current=settings_433.dimmer_on_start_level,
+                    )
+                )
+            if settings_433.dimmer_off_level is not None:
                 settings_list.append(
                     FloatNumberSetting(
                         param_key="dimmer_off_level",
                         name="433Mhz Dimmer Off Level",
-                        current=settings_433.disable_433,
+                        current=settings_433.dimmer_off_level,
                     )
                 )
             if settings_433.disable_433 is not None:
@@ -674,6 +682,76 @@ class Device:
                         current=settings_433.disable_433,
                     )
                 )
+            if settings_433.disable_on_transmitters is not None:
+                settings_list.append(
+                    OnOffSetting(
+                        param_key="disable_on_transmitters",
+                        name="433Mhz Allow ON from Transmitters",
+                        off_value=1,
+                        on_value=0,
+                        current=settings_433.disable_on_transmitters,
+                    )
+                )
+            if settings_433.disable_off_transmitters is not None:
+                settings_list.append(
+                    OnOffSetting(
+                        param_key="disable_off_transmitters",
+                        name="433Mhz Allow OFF from Transmitters",
+                        off_value=1,
+                        on_value=0,
+                        current=settings_433.disable_off_transmitters,
+                    )
+                )
+            if settings_433.toggle_433 is not None:
+                settings_list.append(
+                    OnOffSetting(
+                        param_key="toggle_433",
+                        name="433Mhz Toggle ON from Transmitters",
+                        off_value=0,
+                        on_value=1,
+                        current=settings_433.toggle_433,
+                    )
+                )
+            if settings_433.blink_on_433_on is not None:
+                settings_list.append(
+                    OnOffSetting(
+                        param_key="blink_on_433_on",
+                        name="433Mhz Blink LED on RX",
+                        off_value=0,
+                        on_value=1,
+                        current=settings_433.blink_on_433_on,
+                    )
+                )
+        if settings.state_after_powerloss is not None:
+            settings_list.append(
+                IntNumberSetting(
+                    param_key="state_after_powerloss",
+                    name="Powerstate After Outage",
+                    current=settings.state_after_powerloss,
+                    min_value=0,
+                    max_value=2,
+                )
+            )
+        if settings.dimmer_minimum_level is not None:
+            settings_list.append(
+                FloatNumberSetting(
+                    param_key="dimmer_min_dim",
+                    name="Dimmer Minimum Level",
+                    current=settings.dimmer_minimum_level,
+                    min_value=0.0,
+                    max_value=1.0,
+                )
+            )
+        if settings.disable_multi_press is not None:
+            settings_list.append(
+                OnOffSetting(
+                    param_key="disable_multi_press",
+                    name="Double Click for 100% Dim Level",
+                    off_value=0,
+                    on_value=1,
+                    current=settings.disable_multi_press,
+                )
+            )
         if settings.disable_physical_button is not None:
             settings_list.append(
                 OnOffSetting(

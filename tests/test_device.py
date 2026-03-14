@@ -244,9 +244,9 @@ class TestDevice:
                     "diy_mode": 1,
                     "toggle_433": 0,
                     "position_man_set": 0,
-                    "dimmer_on_start_level": 0,
-                    "dimmer_off_level": 0,
-                    "dimmer_min_dim": 0,
+                    "dimmer_on_start_level": 0.5,
+                    "dimmer_off_level": 0.2,
+                    "dimmer_min_dim": 0.1,
                     "remote_log": 1,
                     "notifcation_on": 1,
                     "notifcation_off": 0,
@@ -269,26 +269,39 @@ class TestDevice:
         setting_update = setting_updates[0]
         # Filter OnOffSettings from the list
         onoff_settings = [s for s in setting_update.settings if isinstance(s, OnOffSetting)]
+        int_settings = [s for s in setting_update.settings if s.__class__.__name__ == "IntNumberSetting"]
+        float_settings = [s for s in setting_update.settings if s.__class__.__name__ == "FloatNumberSetting"]
 
-        # Verify we have four OnOffSettings
-        expected_settings_count = 4
-        assert len(onoff_settings) == expected_settings_count
+        # There should be OnOffSettings for all boolean/toggle settings
+        expected_onoff_names = {
+            "433Mhz",
+            "433Mhz Allow ON from Transmitters",
+            "433Mhz Allow OFF from Transmitters",
+            "433Mhz Toggle ON from Transmitters",
+            "433Mhz Blink LED on RX",
+            "Physical Button",
+            "Led",
+            "Cloud Access",
+            "Double Click for 100% Dim Level",
+        }
+        found_onoff_names = {s.name for s in onoff_settings}
+        assert expected_onoff_names.issubset(found_onoff_names)
 
-        # Find the 433MHz setting and verify it's off
-        # (value == 1 means disabled/off)
-        mhz_433_setting = next((s for s in onoff_settings if "433Mhz" in s.name), None)
-        assert mhz_433_setting is not None
-        assert not mhz_433_setting.is_enabled()
-        cloud = next((s for s in onoff_settings if "Cloud Access" in s.name), None)
-        assert cloud is not None
-        assert not cloud.is_enabled()
+        # Check IntNumberSetting for state_after_powerloss
+        state_after_powerloss = next((s for s in int_settings if s._param_key == "state_after_powerloss"), None)
+        assert state_after_powerloss is not None
+        assert state_after_powerloss._current_state == 2
 
-        led_setting = next((s for s in onoff_settings if "Led" in s.name), None)
-        assert led_setting is not None
-        assert led_setting.is_enabled()
-        physical_button = next((s for s in onoff_settings if "Physical Button" in s.name), None)
-        assert physical_button is not None
-        assert physical_button.is_enabled()
+        # Check FloatNumberSetting for dimmer_minimum_level, dimmer_on_start_level, dimmer_off_level
+        dimmer_min = next((s for s in float_settings if s._param_key == "dimmer_min_dim"), None)
+        assert dimmer_min is not None
+        assert dimmer_min._current_state == 0.1
+        dimmer_on = next((s for s in float_settings if s._param_key == "dimmer_on_start_level"), None)
+        assert dimmer_on is not None
+        assert dimmer_on._current_state == 0.5
+        dimmer_off = next((s for s in float_settings if s._param_key == "dimmer_off_level"), None)
+        assert dimmer_off is not None
+        assert dimmer_off._current_state == 0.2
 
         await device.disconnect()
 
