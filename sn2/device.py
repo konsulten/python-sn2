@@ -706,7 +706,7 @@ class Device:
                 settings_list.append(
                     OnOffSetting(
                         param_key="toggle_433",
-                        name="433Mhz Toggle ON from Transmitters",
+                        name="433Mhz Toggle when ON from Transmitters",
                         off_value=0,
                         on_value=1,
                         current=settings_433.toggle_433,

@@ -269,15 +269,15 @@ class TestDevice:
         setting_update = setting_updates[0]
         # Filter OnOffSettings from the list
         onoff_settings = [s for s in setting_update.settings if isinstance(s, OnOffSetting)]
-        int_settings = [s for s in setting_update.settings if s.__class__.__name__ == "IntNumberSetting"]
-        float_settings = [s for s in setting_update.settings if s.__class__.__name__ == "FloatNumberSetting"]
+        int_settings = [s for s in setting_update.settings if isinstance(s, IntNumberSetting)]
+        float_settings = [s for s in setting_update.settings if isinstance(s, FloatNumberSetting)]
 
         # There should be OnOffSettings for all boolean/toggle settings
         expected_onoff_names = {
             "433Mhz",
             "433Mhz Allow ON from Transmitters",
             "433Mhz Allow OFF from Transmitters",
-            "433Mhz Toggle ON from Transmitters",
+            "433Mhz Toggle when ON from Transmitters",
             "433Mhz Blink LED on RX",
             "Physical Button",
             "Led",
