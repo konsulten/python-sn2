@@ -77,7 +77,58 @@ class Setting:
     """
 
     name: str
+    _param_key: str
+    _current_state: Any
+    
+    def __init__(self, name: str, param_key: str, current: Any) -> None:
+        self.name = name
+        self._param_key = param_key
+        self._current_state = current
+    
 
+
+class FloatNumberSetting(Setting):
+    """
+    A setting that represents a numeric value.
+
+    This class extends the Setting base class to provide a numeric setting that can be updated with a specific value.
+    """
+    min_value: float | None
+    max_value: float | None
+
+    def __init__(self, name: str, param_key: str, current: float, min_value: float = None, max_value: float = None) -> None:
+        super().__init__(name, param_key, current)
+        self.min_value = min_value
+        self.max_value = max_value
+
+
+    async def set_value(self, value: int):
+        if self.min_value is not None and value < self.min_value:
+            raise ValueError(f"Value {value} is less than minimum allowed {self.min_value}")
+        if self.max_value is not None and value > self.max_value:
+            raise ValueError(f"Value {value} is greater than maximum allowed {self.max_value}")
+        await device.update_setting({self._param_key: self.value})
+
+class IntNumberSetting(Setting):
+    """
+    A setting that represents a numeric value.
+
+    This class extends the Setting base class to provide a numeric setting that can be updated with a specific value.
+    """
+    min_value: int | None
+    max_value: int | None
+
+    def __init__(self, name: str, param_key: str, current: int, min_value: int = None, max_value: int = None) -> None:
+        super().__init__(name, param_key, current)
+        self.min_value = min_value
+        self.max_value = max_value
+    
+    async def set_value(self, value: int):
+        if self.min_value is not None and value < self.min_value:
+            raise ValueError(f"Value {value} is less than minimum allowed {self.min_value}")
+        if self.max_value is not None and value > self.max_value:
+            raise ValueError(f"Value {value} is greater than maximum allowed {self.max_value}")
+        await device.update_setting({self._param_key: self.value})
 
 class OnOffSetting(Setting):
     """
@@ -92,7 +143,6 @@ class OnOffSetting(Setting):
         current: The current value/state of the setting.
         on_value: The value that represents the enabled/on state.
         off_value: The value that represents the disabled/off state.
-
     """
 
     def __init__(self, name: str, param_key: str, current: Any, on_value: Any, off_value: Any) -> None:
@@ -113,8 +163,7 @@ class OnOffSetting(Setting):
             None
 
         """
-        self.name = name
-        self._param_key = param_key
+        super().__init__(name, param_key, current)
         self._enable_value = on_value
         self._disable_value = off_value
         self._current_state = current
@@ -606,14 +655,101 @@ class Device:
     @staticmethod
     async def _parse_settings(settings: Settings) -> list[Setting]:
         settings_list: list[Setting] = []
-        if settings.disable_433 is not None:
+        if settings_433 := settings.settings_433_mhz:
+            if settings_433.dimmer_on_start_level is not None:
+                settings_list.append(
+                    FloatNumberSetting(
+                        param_key="dimmer_on_start_level",
+                        name="433Mhz Dimmer On Start Level",
+                        current=settings_433.dimmer_on_start_level,
+                    )
+                )
+            if settings_433.dimmer_off_level is not None:
+                settings_list.append(
+                    FloatNumberSetting(
+                        param_key="dimmer_off_level",
+                        name="433Mhz Dimmer Off Level",
+                        current=settings_433.dimmer_off_level,
+                    )
+                )
+            if settings_433.disable_433 is not None:
+                settings_list.append(
+                    OnOffSetting(
+                        param_key="disable_433",
+                        name="433Mhz",
+                        off_value=1,
+                        on_value=0,
+                        current=settings_433.disable_433,
+                    )
+                )
+            if settings_433.disable_on_transmitters is not None:
+                settings_list.append(
+                    OnOffSetting(
+                        param_key="disable_on_transmitters",
+                        name="433Mhz Allow ON from Transmitters",
+                        off_value=1,
+                        on_value=0,
+                        current=settings_433.disable_on_transmitters,
+                    )
+                )
+            if settings_433.disable_off_transmitters is not None:
+                settings_list.append(
+                    OnOffSetting(
+                        param_key="disable_off_transmitters",
+                        name="433Mhz Allow OFF from Transmitters",
+                        off_value=1,
+                        on_value=0,
+                        current=settings_433.disable_off_transmitters,
+                    )
+                )
+            if settings_433.toggle_433 is not None:
+                settings_list.append(
+                    OnOffSetting(
+                        param_key="toggle_433",
+                        name="433Mhz Toggle when ON from Transmitters",
+                        off_value=0,
+                        on_value=1,
+                        current=settings_433.toggle_433,
+                    )
+                )
+            if settings_433.blink_on_433_on is not None:
+                settings_list.append(
+                    OnOffSetting(
+                        param_key="blink_on_433_on",
+                        name="433Mhz Blink LED on RX",
+                        off_value=0,
+                        on_value=1,
+                        current=settings_433.blink_on_433_on,
+                    )
+                )
+        if settings.state_after_powerloss is not None:
+            settings_list.append(
+                IntNumberSetting(
+                    param_key="state_after_powerloss",
+                    name="Powerstate After Outage",
+                    current=settings.state_after_powerloss,
+                    min_value=0,
+                    max_value=2,
+                )
+            )
+        if settings.dimmer_minimum_level is not None:
+            settings_list.append(
+                FloatNumberSetting(
+                    param_key="dimmer_min_dim",
+                    name="Dimmer Minimum Level",
+                    current=settings.dimmer_minimum_level,
+                    min_value=0.0,
+                    max_value=1.0,
+                )
+            )
+        if settings.disable_multi_press is not None:
             settings_list.append(
                 OnOffSetting(
-                    param_key="disable_433",
-                    name="433Mhz",
-                    off_value=1,
-                    on_value=0,
-                    current=settings.disable_433,
+                    param_key="disable_multi_press",
+                    name="Double Click for 100% Dim Level",
+                    off_value=0,
+                    on_value=1,
+                    current=settings.disable_multi_press,
                 )
             )
         if settings.disable_physical_button is not None:

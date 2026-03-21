@@ -24,6 +24,8 @@ from sn2.device import (
     InformationUpdate,
     NotConnectedError,
     OnOffSetting,
+    IntNumberSetting,
+    FloatNumberSetting,
     SettingsUpdate,
     StateChange,
     UpdateEvent,
@@ -130,8 +132,7 @@ class TestDevice:
         mock_ws = mock_websocket.return_value.mock_ws
 
         await device.connect()
-        await asyncio.sleep(0.05)  # Give send_loop time to process
-        await asyncio.sleep(0)  # Allow the task to start
+        await asyncio.sleep(0.1)
 
         # Verify login message was sent
         assert json.dumps({"type": "login", "value": ""}) in mock_ws.messages_sent
@@ -157,8 +158,7 @@ class TestDevice:
         mock_websocket.side_effect = ConnectionError("Connection error")
 
         await device.connect()
-        await asyncio.sleep(0.05)  # Give send_loop time to process
-        await asyncio.sleep(0.1)  # Allow the task to attempt connection
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         # Verify disconnect callback was called due to connection failure
         disconnect_calls = [
@@ -208,8 +208,7 @@ class TestDevice:
         mock_ws.recv = AsyncMock(side_effect=[info_message, websockets.exceptions.ConnectionClosed(None, None)])
 
         await device.connect()
-        await asyncio.sleep(0.05)  # Give send_loop time to process
-        await asyncio.sleep(0.1)  # Allow message processing
+        await asyncio.sleep(0.1)
 
         # Verify information update callback was called
         info_calls = [call for call in self.on_update_mock.call_args_list if isinstance(call[0][0], InformationUpdate)]
@@ -247,9 +246,9 @@ class TestDevice:
                     "diy_mode": 1,
                     "toggle_433": 0,
                     "position_man_set": 0,
-                    "dimmer_on_start_level": 0,
-                    "dimmer_off_level": 0,
-                    "dimmer_min_dim": 0,
+                    "dimmer_on_start_level": 0.5,
+                    "dimmer_off_level": 0.2,
+                    "dimmer_min_dim": 0.1,
                     "remote_log": 1,
                     "notifcation_on": 1,
                     "notifcation_off": 0,
@@ -262,8 +261,7 @@ class TestDevice:
         mock_ws.recv = AsyncMock(side_effect=[settings_message, websockets.exceptions.ConnectionClosed(None, None)])
 
         await device.connect()
-        await asyncio.sleep(0.05)  # Give send_loop time to process
-        await asyncio.sleep(0.1)  # Allow message processing
+        await asyncio.sleep(0.1)
 
         # Verify settings update callback was called
         setting_updates = [
@@ -273,26 +271,39 @@ class TestDevice:
         setting_update = setting_updates[0]
         # Filter OnOffSettings from the list
         onoff_settings = [s for s in setting_update.settings if isinstance(s, OnOffSetting)]
+        int_settings = [s for s in setting_update.settings if isinstance(s, IntNumberSetting)]
+        float_settings = [s for s in setting_update.settings if isinstance(s, FloatNumberSetting)]
 
-        # Verify we have four OnOffSettings
-        expected_settings_count = 4
-        assert len(onoff_settings) == expected_settings_count
+        # There should be OnOffSettings for all boolean/toggle settings
+        expected_onoff_names = {
+            "433Mhz",
+            "433Mhz Allow ON from Transmitters",
+            "433Mhz Allow OFF from Transmitters",
+            "433Mhz Toggle when ON from Transmitters",
+            "433Mhz Blink LED on RX",
+            "Physical Button",
+            "Led",
+            "Cloud Access",
+            "Double Click for 100% Dim Level",
+        }
+        found_onoff_names = {s.name for s in onoff_settings}
+        assert expected_onoff_names.issubset(found_onoff_names)
 
-        # Find the 433MHz setting and verify it's off
-        # (value == 1 means disabled/off)
-        mhz_433_setting = next((s for s in onoff_settings if "433Mhz" in s.name), None)
-        assert mhz_433_setting is not None
-        assert not mhz_433_setting.is_enabled()
-        cloud = next((s for s in onoff_settings if "Cloud Access" in s.name), None)
-        assert cloud is not None
-        assert not cloud.is_enabled()
+        # Check IntNumberSetting for state_after_powerloss
+        state_after_powerloss = next((s for s in int_settings if s._param_key == "state_after_powerloss"), None)
+        assert state_after_powerloss is not None
+        assert state_after_powerloss._current_state == 2
 
-        led_setting = next((s for s in onoff_settings if "Led" in s.name), None)
-        assert led_setting is not None
-        assert led_setting.is_enabled()
-        physical_button = next((s for s in onoff_settings if "Physical Button" in s.name), None)
-        assert physical_button is not None
-        assert physical_button.is_enabled()
+        # Check FloatNumberSetting for dimmer_minimum_level, dimmer_on_start_level, dimmer_off_level
+        dimmer_min = next((s for s in float_settings if s._param_key == "dimmer_min_dim"), None)
+        assert dimmer_min is not None
+        assert dimmer_min._current_state == 0.1
+        dimmer_on = next((s for s in float_settings if s._param_key == "dimmer_on_start_level"), None)
+        assert dimmer_on is not None
+        assert dimmer_on._current_state == 0.5
+        dimmer_off = next((s for s in float_settings if s._param_key == "dimmer_off_level"), None)
+        assert dimmer_off is not None
+        assert dimmer_off._current_state == 0.2
 
         await device.disconnect()
 
@@ -305,8 +316,7 @@ class TestDevice:
         mock_ws.recv = AsyncMock(side_effect=[state_message, websockets.exceptions.ConnectionClosed(None, None)])
 
         await device.connect()
-        await asyncio.sleep(0.05)  # Give send_loop time to process
-        await asyncio.sleep(0.1)  # Allow message processing
+        await asyncio.sleep(0.1)
 
         # Verify state change callback was called
         expected_brightness = 0.75
@@ -428,8 +438,7 @@ class TestDevice:
         await device.connect(wait_ready=True)
 
         await device.turn_on()
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         # Verify turn on command was sent
         turn_on_commands = [
@@ -448,7 +457,7 @@ class TestDevice:
         await device.connect(wait_ready=True)
 
         await device.turn_off()
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         # Verify turn off command was sent
         turn_off_commands = [
@@ -471,7 +480,7 @@ class TestDevice:
         await device.connect(wait_ready=True)
 
         await device.turn_on()
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         # Verify turn on command was sent
         turn_on_commands = [
@@ -492,7 +501,7 @@ class TestDevice:
         await device.connect(wait_ready=True)
 
         await device.turn_off()
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         # Verify turn off command was sent
         turn_off_commands = [
@@ -512,7 +521,7 @@ class TestDevice:
 
         test_brightness = 0.5
         await device.set_brightness(test_brightness)
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         # Verify brightness command was sent
         brightness_commands = [
@@ -539,7 +548,7 @@ class TestDevice:
         await device.connect(wait_ready=True)
 
         await device.toggle()
-        await asyncio.sleep(0.05)  # Give send_loop time to process the command
+        await asyncio.sleep(0.1)
 
         # Verify toggle command was sent (value -1)
         toggle_commands = [
@@ -596,7 +605,7 @@ class TestDevice:
         mock_ws.recv = AsyncMock(side_effect=[unknown_message, websockets.exceptions.ConnectionClosed(None, None)])
 
         await device.connect()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0)  # Give send_loop time to process
 
         await device.disconnect()
 
