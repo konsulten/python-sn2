@@ -24,6 +24,8 @@ from sn2.device import (
     InformationUpdate,
     NotConnectedError,
     OnOffSetting,
+    IntNumberSetting,
+    FloatNumberSetting,
     SettingsUpdate,
     StateChange,
     UpdateEvent,
